@@ -16,7 +16,43 @@ permissions:
   contents: read
 
 jobs:
+  # 変更されたファイルに応じて後続のジョブを実行するか判定する。
+  # ドキュメントのみの変更で Rust の lint / test が走らないようにするのが目的。
+  changes:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+      deps: ${{ steps.filter.outputs.deps }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # dorny/paths-filter v4.0.3
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d
+        id: filter
+        with:
+          filters: |
+            # Rust のビルド / lint / test に影響するファイル
+            rust:
+              - 'crates/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - '.github/actions/**'
+              - '.github/workflows/ci.yaml'
+            # 依存クレートのポリシーチェック (cargo-deny) に影響するファイル
+            deps:
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'deny.toml'
+              - '.github/actions/**'
+              - '.github/workflows/ci.yaml'
+
   format:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -28,6 +64,8 @@ jobs:
       - run: cargo fmt --all -- --check
 
   clippy:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -38,6 +76,8 @@ jobs:
           cargo clippy --workspace --all-targets --all-features -- -D warnings
 
   deny:
+    needs: changes
+    if: needs.changes.outputs.deps == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -54,6 +94,8 @@ jobs:
       - run: cargo deny --all-features --locked check
 
   machete:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -70,6 +112,8 @@ jobs:
       - run: cargo machete
 
   test:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
