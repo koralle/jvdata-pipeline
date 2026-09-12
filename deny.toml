@@ -1,6 +1,6 @@
 # cargo-deny の設定
 #
-# ローカル: just deny
+# ローカル: mise run deny
 # CI:       .github/workflows/ci.yaml の deny ジョブ
 # ドキュメント: https://embarkstudios.github.io/cargo-deny/
 

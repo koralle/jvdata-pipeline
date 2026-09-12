@@ -1,7 +1,59 @@
-# 開発ツール (.github/workflows/ci.yaml の tool: 指定と同じバージョンに揃える)
+# 開発ツール
 #
-# Rust 本体 (rustfmt / clippy 込み) は rust-toolchain.toml で管理している
+# - cargo-nextest / cargo-machete / cargo-deny は
+#   .github/workflows/ci.yaml の tool: 指定と同じバージョンに揃える
+# - Rust 本体 (rustfmt / clippy 込み) は rust-toolchain.toml で管理している
 [tools]
 "cargo:cargo-nextest" = "0.9.144"
 "cargo:cargo-machete" = "0.9.2"
 "cargo:cargo-deny" = "0.20.2"
+
+# Git フック
+"npm:lefthook" = "2.1.12"
+
+# 開発環境をセットアップする (ツール導入 + Git フック有効化)
+[tasks.setup]
+description = "開発環境をセットアップする"
+# 初回は lefthook がまだ PATH にないため mise exec で再解決する
+run = "mise install && mise exec -- lefthook install"
+
+# フォーマット
+[tasks.fmt]
+description = "コードを整形する"
+run = "cargo fmt --all"
+
+[tasks.fmt-check]
+description = "フォーマットをチェックする"
+run = "cargo fmt --all -- --check"
+
+# Lint
+[tasks.clippy]
+description = "Clippy で lint する"
+run = "cargo clippy --workspace --all-targets --all-features -- -D warnings"
+
+# テスト
+[tasks.test]
+description = "テストを実行する (nextest)"
+run = "cargo nextest run --workspace --all-features"
+
+[tasks.test-doc]
+description = "doc テストを実行する"
+run = "cargo test --doc --workspace --all-features"
+
+# 依存クレート
+[tasks.machete]
+description = "未使用クレートを検出する"
+run = "cargo machete"
+
+[tasks.deny]
+description = "依存クレートのポリシー (脆弱性 / ライセンス) をチェックする"
+run = "cargo deny --all-features --locked check"
+
+# まとめ
+[tasks.check]
+description = "フォーマットと Clippy をチェックする (pre-commit)"
+depends = ["fmt-check", "clippy"]
+
+[tasks.ci]
+description = "CI と同じチェックをまとめて実行する (直列: mise run -j 1 ci)"
+depends = ["fmt-check", "clippy", "test", "test-doc", "machete", "deny"]
