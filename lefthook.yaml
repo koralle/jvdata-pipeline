@@ -1,17 +1,17 @@
 pre-commit:
   commands:
     check:
-      run: just check
+      run: mise run check
       fail_text: "Rust のフォーマットまたは Clippy のチェックに失敗しました。"
     machete:
-      run: just machete
+      run: mise run machete
       fail_text: "未使用クレートの検出 (cargo-machete) に失敗しました。"
 
 pre-push:
   commands:
     test:
-      run: just test
+      run: mise run test
       fail_text: "Rust のテストに失敗しました。"
     deny:
-      run: just deny
+      run: mise run deny
       fail_text: "依存クレートのポリシーチェック (cargo-deny) に失敗しました。"
