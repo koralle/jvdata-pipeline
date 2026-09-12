@@ -82,3 +82,6 @@ jobs:
           tool: nextest@0.9.144
 
       - run: cargo nextest run --workspace --all-features
+
+      # nextest は doctest を実行しないため個別に実行する
+      - run: cargo test --doc --workspace --all-features
