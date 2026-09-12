@@ -1,0 +1,46 @@
+# cargo-deny の設定
+#
+# ローカル: just deny
+# CI:       .github/workflows/ci.yaml の deny ジョブ
+# ドキュメント: https://embarkstudios.github.io/cargo-deny/
+
+[advisories]
+# 無視するアドバイザリを追加する場合は理由とセットで書く
+# ignore = [{ id = "RUSTSEC-0000-0000", reason = "..." }]
+ignore = []
+
+[bans]
+# 同一クレートの複数バージョン混入は警告に留める
+multiple-versions = "warn"
+# Cargo.toml のワイルドカードバージョン指定 ("*") は禁止
+wildcards = "deny"
+# バージョン重複時に出力する dot グラフのハイライト方法
+highlight = "all"
+
+[licenses]
+# ライセンス本文から SPDX を判定するときの信頼度
+confidence-threshold = 0.8
+# allow に挙げたライセンスが 1 つも使われていなくても警告しない
+# (allow リストを常に最新に保ちたければ "warn" に戻す)
+unused-allowed-license = "allow"
+# 許可するライセンス (SPDX 識別子)
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Unicode-3.0",
+  "Zlib",
+]
+
+[licenses.private]
+# publish = false の workspace クレートはライセンス未記載でも許可する
+# 外部公開するときは publish = false を外し、license フィールドと LICENSE を用意する
+ignore = true
+
+# 依存クレートの取得元を制限する
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
+
+jobs:
+  format:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: ./.github/actions/setup-rust-toolchain
+        with:
+          cache: false
+
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: ./.github/actions/setup-rust-toolchain
+
+      - run: |
+          cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+  deny:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: ./.github/actions/setup-rust-toolchain
+        with:
+          cache: false
+
+      # taiki-e/install-action v2.87.12
+      - uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375
+        with:
+          tool: cargo-deny@0.20.2
+
+      - run: cargo deny --all-features --locked check
+
+  machete:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: ./.github/actions/setup-rust-toolchain
+        with:
+          cache: false
+
+      # taiki-e/install-action v2.87.12
+      - uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375
+        with:
+          tool: cargo-machete@0.9.2
+
+      - run: cargo machete
+
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: ./.github/actions/setup-rust-toolchain
+
+      # taiki-e/install-action v2.87.12
+      - uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375
+        with:
+          tool: nextest@0.9.144
+
+      - run: cargo nextest run --workspace --all-features

@@ -1,0 +1,7 @@
+# 開発ツール (.github/workflows/ci.yaml の tool: 指定と同じバージョンに揃える)
+#
+# Rust 本体 (rustfmt / clippy 込み) は rust-toolchain.toml で管理している
+[tools]
+"cargo:cargo-nextest" = "0.9.144"
+"cargo:cargo-machete" = "0.9.2"
+"cargo:cargo-deny" = "0.20.2"
