@@ -129,3 +129,54 @@ jobs:
 
       # nextest は doctest を実行しないため個別に実行する
       - run: cargo test --doc --workspace --all-features
+
+  ci-gate:
+    name: CI Gate
+    if: ${{ always() }}
+    needs:
+      - changes
+      - format
+      - clippy
+      - machete
+      - test
+      - deny
+    runs-on: ubuntu-24.04
+    env:
+      CHANGES_RESULT: ${{ needs.changes.result }}
+      RUST_CHANGED: ${{ needs.changes.outputs.rust }}
+      DEPS_CHANGED: ${{ needs.changes.outputs.deps }}
+      FORMAT_RESULT: ${{ needs.format.result }}
+      CLIPPY_RESULT: ${{ needs.clippy.result }}
+      MACHETE_RESULT: ${{ needs.machete.result }}
+      TEST_RESULT: ${{ needs.test.result }}
+      DENY_RESULT: ${{ needs.deny.result }}
+    steps:
+      - name: Verify CI results
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "$CHANGES_RESULT" != "success" ]]; then
+            echo "::error::changes job did not succeed: $CHANGES_RESULT"
+            exit 1
+          fi
+
+          check_success() {
+            local job="$1"
+            local result="$2"
+            if [[ "$result" != "success" ]]; then
+              echo "::error::$job was expected to succeed but finished with $result"
+              return 1
+            fi
+          }
+
+          if [[ "$RUST_CHANGED" == "true" ]]; then
+            check_success format "$FORMAT_RESULT"
+            check_success clippy "$CLIPPY_RESULT"
+            check_success machete "$MACHETE_RESULT"
+            check_success test "$TEST_RESULT"
+          fi
+
+          if [[ "$DEPS_CHANGED" == "true" ]]; then
+            check_success deny "$DENY_RESULT"
+          fi
