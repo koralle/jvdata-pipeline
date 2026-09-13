@@ -7,7 +7,9 @@ services:
   # ボリュームの宣言も親ディレクトリ /var/lib/postgresql になった。
   # 旧来の /var/lib/postgresql/data に載せても PGDATA には使われない。
   postgres:
-    image: postgres:18-alpine
+    # タグに加えてダイジェストでも固定する (arm64 / amd64 両方を含むインデックスの
+    # ダイジェストなので、どちらのホストでも解決できる)。
+    image: postgres:18-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
     environment:
       POSTGRES_DB: jvdata
       # 管理用のロール。ホスト側はこれで繋ぐ。
