@@ -2,9 +2,12 @@
 #
 # JV-Link は 32-bit x86 のバイナリなので、このイメージは x86_64 ホストでしか
 # 意味を持たない。ARM ホストでは起動時のスモークテストで落ちる (fail closed)。
+#
+# ベースイメージはタグに加えてダイジェストでも固定する。arm64 と amd64 の
+# 両方を含むインデックスのダイジェストなので、どちらのホストでも解決できる。
 
 # 32-bit の COM スモークテストを mingw-w64 でビルドする段。
-FROM ubuntu:24.04 AS com32-builder
+FROM ubuntu:24.04@sha256:224a1869083a311ef3f13648a154ba79832fbef6364d31493642ca03082da254 AS com32-builder
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -25,7 +28,7 @@ RUN i686-w64-mingw32-gcc \
         -lole32
 
 
-FROM ubuntu:24.04
+FROM ubuntu:24.04@sha256:224a1869083a311ef3f13648a154ba79832fbef6364d31493642ca03082da254
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV WINEPREFIX=/wineprefix
