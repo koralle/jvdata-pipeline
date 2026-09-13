@@ -7,12 +7,11 @@ services:
   # ボリュームの宣言も親ディレクトリ /var/lib/postgresql になった。
   # 旧来の /var/lib/postgresql/data に載せても PGDATA には使われない。
   postgres:
-    # タグに加えてダイジェストでも固定する (arm64 / amd64 両方を含むインデックスの
-    # ダイジェストなので、どちらのホストでも解決できる)。
-    # alpine (musl) にはロケールデータが無いので、lc_time などは設定しても
-    # 無言で効かない (to_char の TMMonth が英語のままになる)。DB 側で日本語の
-    # 整形が必要なら Debian 版の postgres:18 に変えて ja_JP.UTF-8 を生成する。
-    image: postgres:18-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
+    # Debian 版。alpine (musl) にはロケールデータが無く、lc_time などを設定しても
+    # 無言で効かない (to_char の TMMonth が英語のままになる) ため、
+    # docker/postgres/Dockerfile で ja_JP.UTF-8 を焼き込んでいる。
+    build: docker/postgres
+    image: jvdata-postgres
     environment:
       POSTGRES_DB: jvdata
       # 管理用のロール。ホスト側はこれで繋ぐ。
@@ -23,8 +22,9 @@ services:
       TZ: Asia/Tokyo
     # DateStyle の既定は ISO, MDY で、1/2/2025 のような曖昧な入力を
     # 米国式に「1月2日」と解釈する。日本で使う想定なので YMD にして、
-    # 曖昧な入力はエラーにする。
-    command: ["postgres", "-c", "DateStyle=ISO, YMD"]
+    # 曖昧な入力はエラーにする。lc_time は日本語の月日名のため。ロケールが
+    # 無ければ起動時にエラーになるので、無言で英語のままにはならない。
+    command: ["postgres", "-c", "DateStyle=ISO, YMD", "-c", "lc_time=ja_JP.UTF-8"]
     ports:
       - "127.0.0.1:5432:5432"
     volumes:

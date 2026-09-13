@@ -6,7 +6,7 @@
 
 | サービス | 役割 | 公開 |
 | --- | --- | --- |
-| `postgres` | PostgreSQL 18。DB / ユーザー / パスワードはすべて `jvdata` | `127.0.0.1:5432` |
+| `postgres` | PostgreSQL 18。Debian 版に ja_JP.UTF-8 を焼き込んで使う | `127.0.0.1:5432` |
 | `wine` | 32-bit Windows COM (JV-Link) を呼ぶための Wine。noVNC のデスクトップ付き | `127.0.0.1:6080` |
 
 ```sh
