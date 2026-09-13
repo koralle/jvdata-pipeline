@@ -2,18 +2,32 @@
 
 ## 開発用コンテナ
 
-`compose.yaml` で 2 つのコンテナを起動する。
+`compose.yaml` で一式を起動する。
 
 | サービス | 役割 | 公開 |
 | --- | --- | --- |
 | `postgres` | PostgreSQL 18。Debian 版に ja_JP.UTF-8 を焼き込んで使う | `127.0.0.1:5432` |
+| `postgres_exporter` | PostgreSQL のメトリクスを Prometheus 形式で公開 | `127.0.0.1:9187` |
+| `prometheus` | メトリクスの収集と保存 (保持 30 日) | `127.0.0.1:9090` |
+| `grafana` | メトリクスの可視化。ダッシュボード同梱 | `127.0.0.1:13000` |
+| `pgadmin` | GUI の DB 運用ツール (接続先登録済み) | `127.0.0.1:5050` |
+| `dbtools` | psql / pgcli。DB コンテナに運用ツールを入れないため分離している | - |
 | `wine` | 32-bit Windows COM (JV-Link) を呼ぶための Wine。noVNC のデスクトップ付き | `127.0.0.1:6080` |
 
 ```sh
 docker compose up -d
+docker compose exec dbtools psql                     # DB を触る
 docker compose exec wine wine /opt/smoke/com32.exe   # 32-bit COM が動くか確認する
-docker compose down
+docker compose down                                  # データはボリュームに残る
 ```
+
+| | URL | ログイン |
+| --- | --- | --- |
+| Grafana | http://127.0.0.1:13000 | `admin` / `jvdata` |
+| pgAdmin | http://127.0.0.1:5050 | `jvdata@example.com` / `jvdata` |
+| Prometheus | http://127.0.0.1:9090 | - |
+
+DB の運用・監視・チューニングの手順は [docs/postgres-operations.md](docs/postgres-operations.md)。
 
 ### PostgreSQL への接続経路とロール
 
@@ -21,6 +35,7 @@ docker compose down
 | --- | --- | --- |
 | ホスト OS | `127.0.0.1:5432` | `jvdata` (管理用) |
 | wine コンテナ | `postgres:5432` | `jvdata_loader` (収集用 / 管理権限なし) |
+| postgres_exporter / Grafana | `postgres:5432` | `jvdata_metrics` (統計の読み取りのみ) |
 
 接続文字列は `postgres://<user>:<password>@<host>:5432/jvdata`。wine コンテナには
 `POSTGRES_HOST` / `POSTGRES_PORT` / `POSTGRES_DB` / `POSTGRES_USER` /
