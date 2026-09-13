@@ -1,0 +1,74 @@
+name: jvdata-pipeline
+
+services:
+  # PostgreSQL 18。
+  #
+  # 18 からデータディレクトリが /var/lib/postgresql/18/docker に変わり、
+  # ボリュームの宣言も親ディレクトリ /var/lib/postgresql になった。
+  # 旧来の /var/lib/postgresql/data に載せても PGDATA には使われない。
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: jvdata
+      # 管理用のロール。ホスト側はこれで繋ぐ。
+      POSTGRES_USER: jvdata
+      POSTGRES_PASSWORD: jvdata
+      # TZ は initdb が postgresql.conf の timezone / log_timezone に書き込む。
+      # 既存のボリュームには効かないので、変えるときはボリュームを作り直す。
+      TZ: Asia/Tokyo
+    # DateStyle の既定は ISO, MDY で、1/2/2025 のような曖昧な入力を
+    # 米国式に「1月2日」と解釈する。日本で使う想定なので YMD にして、
+    # 曖昧な入力はエラーにする。
+    command: ["postgres", "-c", "DateStyle=ISO, YMD"]
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql
+      # 初回起動時だけ走る。既存のボリュームには効かない。
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "jvdata", "-d", "jvdata"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # 32-bit プロセスから 32-bit Windows COM コンポーネント (JV-Link) を呼ぶための Wine。
+  #
+  # x86_64 専用。JV-Link もそれを動かす 32-bit プロセスも x86 のバイナリで、
+  # ARM ホストから実行する経路は無い (docs の wine_docker.md と同じ結論)。
+  # そのため platform を固定し、起動時に 32-bit のスモークテストを必ず通す。
+  wine:
+    build: docker/wine
+    image: jvdata-wine
+    platform: linux/amd64
+    depends_on:
+      # postgres が接続を受け付けてから起動する。
+      postgres:
+        condition: service_healthy
+    environment:
+      DISPLAY: ":1"
+      WINEPREFIX: /wineprefix
+      WINEARCH: win64
+      LANG: ja_JP.UTF-8
+      LC_ALL: ja_JP.UTF-8
+      TZ: Asia/Tokyo
+      # compose のネットワーク内なのでサービス名で引く。32-bit プロセスも
+      # Winsock 経由でこの名前を使える。ホストの 127.0.0.1:5432 は経由しない。
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: jvdata
+      # 収集側のロール。管理用の jvdata とは別で、管理権限は持たない。
+      POSTGRES_USER: jvdata_loader
+      POSTGRES_PASSWORD: jvdata_loader
+    ports:
+      # VNC はパスワード無しで動くので loopback にだけ公開する。
+      # 手元のブラウザで http://localhost:6080/vnc.html
+      - "127.0.0.1:6080:6080"
+    volumes:
+      # prefix を永続化する。手作業で入れた JV-Link と利用登録は
+      # docker compose down では消えない。
+      - wineprefix:/wineprefix
+
+volumes:
+  pgdata:
+  wineprefix:
