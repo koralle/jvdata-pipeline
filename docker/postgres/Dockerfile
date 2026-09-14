@@ -11,3 +11,9 @@
 FROM postgres:18@sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280
 
 RUN localedef -i ja_JP -c -f UTF-8 -A /usr/share/locale/locale.alias ja_JP.UTF-8
+
+# WAL アーカイブを置くディレクトリを postgres 所有で作っておく。
+# 名前付きボリュームはイメージ側の所有権を引き継ぐので、これが無いと
+# ボリュームが root 所有になり archive_command が書けない (実測)。
+RUN mkdir -p /var/lib/postgresql/wal-archive \
+    && chown postgres:postgres /var/lib/postgresql/wal-archive

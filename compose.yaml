@@ -33,6 +33,9 @@ services:
       - ./docker/postgres/conf/postgresql.conf:/etc/postgresql/postgresql.conf:ro
       # 初回起動時だけ走る。既存のボリュームには効かない。
       - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    # 並列クエリの動的共有メモリは /dev/shm を使う。Docker の既定 (64MB) だと
+    # 「could not resize shared memory segment」で落ちるので広げておく。
+    shm_size: "256mb"
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "jvdata", "-d", "jvdata"]
       interval: 5s
