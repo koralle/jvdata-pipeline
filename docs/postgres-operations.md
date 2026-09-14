@@ -41,16 +41,20 @@ mise run pgcli
 
 ### pgAdmin
 
-http://127.0.0.1:5050 (`jvdata@example.com` / `jvdata`)
+http://127.0.0.1:5050 (`jvdata@example.com` / `.env` の `PGADMIN_PASSWORD`)
 
 サーバーは `docker/pgadmin/servers.json` で登録済み。初回だけパスワード
 (`.env` の `POSTGRES_PASSWORD`) の入力を求められる。
+
+`PGADMIN_DEFAULT_PASSWORD` は初回起動時にしか効かない。後から `.env` の
+`PGADMIN_PASSWORD` を変えても反映されない (pgAdmin の UI で変更するか、
+`pgadmin_data` ボリュームを消して作り直す)。
 
 ## メトリクスとダッシュボード
 
 | | URL | ログイン |
 | --- | --- | --- |
-| Grafana | http://127.0.0.1:13000 | `admin` / `.env` の `GF_ADMIN_PASSWORD` |
+| Grafana | http://127.0.0.1:13000 | `admin` / `.env` の `GF_SECURITY_ADMIN_PASSWORD` |
 | Prometheus | http://127.0.0.1:9090 | - |
 | postgres_exporter (生のメトリクス) | http://127.0.0.1:9187/metrics | - |
 

@@ -25,7 +25,7 @@ mise run down    # 停止 (データはボリュームに残る)
 
 | | URL | ログイン |
 | --- | --- | --- |
-| Grafana | http://127.0.0.1:13000 | `admin` / `.env` の `GF_ADMIN_PASSWORD` |
+| Grafana | http://127.0.0.1:13000 | `admin` / `.env` の `GF_SECURITY_ADMIN_PASSWORD` |
 | pgAdmin | http://127.0.0.1:5050 | `jvdata@example.com` / `.env` の `PGADMIN_PASSWORD` |
 | Prometheus | http://127.0.0.1:9090 | - |
 

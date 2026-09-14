@@ -20,7 +20,7 @@ services:
     image: jvdata-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:?deploy/production/README.md} # ggignore
+      POSTGRES_DB: ${POSTGRES_DB:?deploy/production/README.md}
       POSTGRES_USER: ${POSTGRES_USER:?deploy/production/README.md}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?deploy/production/README.md} # ggignore
       # init スクリプト (10-roles.sh) がロールを作るのに使う
@@ -42,7 +42,9 @@ services:
     # 「could not resize shared memory segment」で落ちるので広げておく。
     shm_size: "1gb"
     healthcheck:
-      test: ["CMD", "pg_isready"]
+      # 引数なしの pg_isready は OS ユーザー名 (root) で startup packet を投げるので
+      # 認証失敗の FATAL がログに残り続ける。コンテナ側の環境変数で評価する。
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -57,7 +59,7 @@ services:
       - --extend.query-path=/etc/postgres_exporter/queries.yaml
       - --config.file=
     environment:
-      DATA_SOURCE_URI: postgres:5432/jvdata?sslmode=disable
+      DATA_SOURCE_URI: postgres:5432/${POSTGRES_DB:?deploy/production/README.md}?sslmode=disable
       DATA_SOURCE_USER: jvdata_metrics
       DATA_SOURCE_PASS: ${POSTGRES_METRICS_PASSWORD:?deploy/production/README.md} # ggignore
     volumes:
@@ -88,7 +90,12 @@ services:
     environment:
       GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD:?deploy/production/README.md} # ggignore
       GF_USERS_ALLOW_SIGN_UP: "false"
+      # 利用統計と更新チェックの外部送信を止める
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
       # provisioning の postgres.yaml が $__env{} で参照する
+      POSTGRES_DB: ${POSTGRES_DB:?deploy/production/README.md}
       POSTGRES_METRICS_PASSWORD: ${POSTGRES_METRICS_PASSWORD:?deploy/production/README.md} # ggignore
     volumes:
       - ../../docker/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
@@ -149,6 +156,9 @@ services:
   # バックアップ先はこのホストのボリュームなので、別ホストへのコピーは別途必要
   # (README 参照)。ここが埋まると DB も止まるので、容量を監視すること。
   backup:
+    # postgres サービスと同じイメージを使う (pg_dump / pg_basebackup が要る)。
+    # build を書かないと単体 up / pull でレジストリを見にいって失敗する。
+    build: ../../docker/postgres
     image: jvdata-postgres
     restart: unless-stopped
     environment:

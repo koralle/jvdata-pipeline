@@ -81,7 +81,7 @@ if [ ! -f .env ]; then
     printf 'POSTGRES_PASSWORD=%s\n' "$(openssl rand -hex 16)"
     printf 'POSTGRES_LOADER_PASSWORD=%s\n' "$(openssl rand -hex 16)"
     printf 'POSTGRES_METRICS_PASSWORD=%s\n' "$(openssl rand -hex 16)"
-    printf 'GF_ADMIN_PASSWORD=%s\n' "$(openssl rand -hex 16)"
+    printf 'GF_SECURITY_ADMIN_PASSWORD=%s\n' "$(openssl rand -hex 16)"
     printf 'PGADMIN_PASSWORD=%s\n' "$(openssl rand -hex 16)"
   } > .env
   echo ".env を作成しました (開発機用のランダムな値。git 管理外)"

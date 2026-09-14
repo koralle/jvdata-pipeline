@@ -8,7 +8,7 @@
       "MaintenanceDB": "jvdata",
       "Username": "jvdata",
       "SSLMode": "prefer",
-      "Comment": "パスワードは compose.yaml の POSTGRES_PASSWORD (jvdata)"
+      "Comment": "パスワードは .env の POSTGRES_PASSWORD"
     }
   }
 }

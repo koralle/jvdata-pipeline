@@ -84,6 +84,9 @@ varlock run -- docker compose exec dbtools psql
 | 毎日 | `pg_dump -Fc` | `/backup/dump` | 7 |
 | 毎週 | `pg_basebackup -Ft -z` | `/backup/base` | 2 |
 
+最終実行の時刻は `/backup/.last-dump` / `.last-base` に記録するので、
+コンテナやホストを再起動しても間隔は維持される (初回だけ両方を即実行)。
+
 ```sh
 varlock run -- docker compose exec backup ls -l /backup/dump
 varlock run -- docker compose run --rm -e BACKUP_RUN_ONCE=1 backup   # 手で 1 回
@@ -101,8 +104,12 @@ ssh <host> 'docker run --rm -v jvdata-prod_backup:/b -v /tmp:/out alpine \
 
 ```sh
 # 論理 (dump から)。まず別 DB に戻して中身を確認する
+# dump は backup ボリュームにあるので pg_restore は backup コンテナから打つ
+# (postgres コンテナには /backup がマウントされていない)
 varlock run -- docker compose exec postgres createdb -U jvdata restore_check
-varlock run -- docker compose exec postgres pg_restore -U jvdata -d restore_check /path/to.dump
+varlock run -- docker compose exec backup \
+  pg_restore --host=postgres --username=jvdata --dbname=restore_check \
+  /backup/dump/<file>.dump
 
 # PITR (base + WAL)。PostgreSQL のドキュメント通り:
 #   1. DB を止める

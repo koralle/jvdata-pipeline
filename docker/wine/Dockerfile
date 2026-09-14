@@ -58,6 +58,9 @@ RUN dpkg --add-architecture i386 \
     && curl -fsSL -o /etc/apt/sources.list.d/winehq-noble.sources \
         https://dl.winehq.org/wine-builds/ubuntu/dists/noble/winehq-noble.sources \
     && apt-get update \
+    # winehq-stable のバージョンは固定できない (WineHQ のリポジトリは
+    # 新しいリリースしか保持しない)。再現性が必要になったら tarball 配布の
+    # 確認から始めること。
     && apt-get install -y --install-recommends winehq-stable \
     && locale-gen ja_JP.UTF-8 \
     && rm -rf /var/lib/apt/lists/*

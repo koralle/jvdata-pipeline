@@ -17,7 +17,7 @@ datasources:
       # 値は compose.yaml が grafana サービスに渡す。
       password: $__env{POSTGRES_METRICS_PASSWORD}
     jsonData:
-      database: jvdata
+      database: $__env{POSTGRES_DB}
       sslmode: disable
       postgresVersion: 1800
       timescaledb: false

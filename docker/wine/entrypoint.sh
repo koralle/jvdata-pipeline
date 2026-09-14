@@ -36,8 +36,11 @@ start_display() {
   wait_for_display
 
   fluxbox >/tmp/fluxbox.log 2>&1 &
+  # -nopw (パスワードなし) なので localhost にだけ bind する。
+  # ここに繋ぐのは同じコンテナの websockify だけ。コンテナ間ネットワークからは
+  # 遮断しておく。
   x11vnc -display "$DISPLAY" -forever -shared -rfbport "$VNC_PORT" -nopw \
-    >/tmp/x11vnc.log 2>&1 &
+    -localhost >/tmp/x11vnc.log 2>&1 &
   websockify --web=/usr/share/novnc "0.0.0.0:$NOVNC_PORT" "localhost:$VNC_PORT" \
     >/tmp/novnc.log 2>&1 &
 }
