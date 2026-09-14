@@ -93,3 +93,9 @@ $RECYCLE.BIN/
 *.lnk
 
 # End of https://www.toptal.com/developers/gitignore/api/linux,rust,rust-analyzer,macos,windows
+
+### 環境変数 ###
+# 実際の値は .env に置く (.env.schema は定義なのでコミットする)
+.env
+.env.*
+!.env.schema

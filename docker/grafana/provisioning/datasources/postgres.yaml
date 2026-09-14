@@ -13,7 +13,9 @@ datasources:
     url: postgres:5432
     user: jvdata_metrics
     secureJsonData:
-      password: jvdata_metrics
+      # Grafana の provisioning は $__env{} を展開する。
+      # 値は compose.yaml が grafana サービスに渡す。
+      password: $__env{POSTGRES_METRICS_PASSWORD}
     jsonData:
       database: jvdata
       sslmode: disable
