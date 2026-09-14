@@ -23,19 +23,18 @@ PostgreSQL ── postgres_exporter ── Prometheus ── Grafana
 ### psql
 
 ```sh
-docker compose exec dbtools psql
+mise run psql
 ```
 
 接続情報は環境変数 (`PGHOST` / `PGDATABASE` / `PGUSER` / `PGPASSWORD`) で
-入っているので、引数なしで繋がる。ホストから繋ぐときは
-`docker compose exec dbtools psql -h host.docker.internal` は使えないため、
-`psql "postgresql://jvdata:jvdata@127.0.0.1:5432/jvdata"` のようにホスト側の
-クライアントから直接指定する。
+入っているので、引数なしで繋がる。ホスト側のクライアントから直接繋ぐ場合は
+`psql "postgresql://jvdata:<password>@127.0.0.1:5432/jvdata"`
+(password は `.env` の `POSTGRES_PASSWORD`)。
 
 ### pgcli
 
 ```sh
-docker compose exec dbtools pgcli
+mise run pgcli
 ```
 
 補完とシンタックスハイライト付き。`.pgclirc` を置けば設定できる。
@@ -45,13 +44,13 @@ docker compose exec dbtools pgcli
 http://127.0.0.1:5050 (`jvdata@example.com` / `jvdata`)
 
 サーバーは `docker/pgadmin/servers.json` で登録済み。初回だけパスワード
-(`jvdata`) の入力を求められる。
+(`.env` の `POSTGRES_PASSWORD`) の入力を求められる。
 
 ## メトリクスとダッシュボード
 
 | | URL | ログイン |
 | --- | --- | --- |
-| Grafana | http://127.0.0.1:13000 | `admin` / `jvdata` |
+| Grafana | http://127.0.0.1:13000 | `admin` / `.env` の `GF_ADMIN_PASSWORD` |
 | Prometheus | http://127.0.0.1:9090 | - |
 | postgres_exporter (生のメトリクス) | http://127.0.0.1:9187/metrics | - |
 
@@ -148,7 +147,7 @@ http://127.0.0.1:5050 (`jvdata@example.com` / `jvdata`)
 
    ```sh
    # docker/postgres/conf/postgresql.conf を編集して
-   docker compose restart postgres
+   varlock run -- docker compose restart postgres
    ```
 
    主なノブ:
@@ -175,7 +174,7 @@ http://127.0.0.1:5050 (`jvdata@example.com` / `jvdata`)
 - 計測用のロール `jvdata_metrics` は統計ビューしか読めない。Grafana の
   PostgreSQL データソースもこれを使っているので、任意の SQL を Grafana から
   流すことはできない (見たい SQL はダッシュボードに足して、
-  権限が必要なら `10-roles.sql` に足す)。
+  権限が必要なら `10-roles.sh` に足す)。
 - メトリクスの保持期間は Prometheus の `--storage.tsdb.retention.time=30d`。
 - パイプライン側のメトリクス (records/sec、backlog、error rate) は
   importer の実装後。当面は「行の挿入 / 秒」と「xact_commit / 秒」で

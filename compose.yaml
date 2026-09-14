@@ -13,10 +13,13 @@ services:
     build: docker/postgres
     image: jvdata-postgres
     environment:
-      POSTGRES_DB: jvdata
+      POSTGRES_DB: ${POSTGRES_DB:?mise run up}
       # 管理用のロール。ホスト側はこれで繋ぐ。
-      POSTGRES_USER: jvdata
-      POSTGRES_PASSWORD: jvdata
+      POSTGRES_USER: ${POSTGRES_USER:?mise run up}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?mise run up} # ggignore
+      # init スクリプト (10-roles.sh) がロールを作るのに使う
+      POSTGRES_LOADER_PASSWORD: ${POSTGRES_LOADER_PASSWORD:?mise run up} # ggignore
+      POSTGRES_METRICS_PASSWORD: ${POSTGRES_METRICS_PASSWORD:?mise run up} # ggignore
       # initdb が timezone / log_timezone を決めるのに使う。運用中の値は
       # docker/postgres/conf/postgresql.conf 側で指定している。
       TZ: Asia/Tokyo
@@ -50,7 +53,7 @@ services:
       # 設定ファイルは使わない (毎回 "No such file" の警告が出るのを避ける)
       - --config.file=
     environment:
-      DATA_SOURCE_NAME: "postgresql://jvdata_metrics:jvdata_metrics@postgres:5432/jvdata?sslmode=disable"
+      DATA_SOURCE_NAME: "postgresql://jvdata_metrics:${POSTGRES_METRICS_PASSWORD:?mise run up}@postgres:5432/${POSTGRES_DB:?mise run up}?sslmode=disable" # ggignore
     volumes:
       - ./docker/postgres_exporter/queries.yaml:/etc/postgres_exporter/queries.yaml:ro
     ports:
@@ -80,8 +83,10 @@ services:
   grafana:
     image: grafana/grafana:13.2.1@sha256:f772d434e8fab0049deb2b1b30abd43342bcfca1537614aa8d36080232cf4283
     environment:
-      GF_SECURITY_ADMIN_PASSWORD: jvdata
+      GF_SECURITY_ADMIN_PASSWORD: ${GF_ADMIN_PASSWORD:?mise run up} # ggignore
       GF_USERS_ALLOW_SIGN_UP: "false"
+      # provisioning の postgres.yaml が $__env{} で参照する
+      POSTGRES_METRICS_PASSWORD: ${POSTGRES_METRICS_PASSWORD:?mise run up} # ggignore
     volumes:
       # provisioning 全体ではなく必要なサブディレクトリだけ載せる
       # (イメージ側の plugins / alerting 用のディレクトリを消さないため)。
@@ -100,8 +105,8 @@ services:
   pgadmin:
     image: dpage/pgadmin4:9.17@sha256:2f4ce946ddf8360680d7eff4eaba1d91859eb6b4003e6623bad5c63a322c2f4d
     environment:
-      PGADMIN_DEFAULT_EMAIL: jvdata@example.com
-      PGADMIN_DEFAULT_PASSWORD: jvdata
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:?mise run up}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:?mise run up} # ggignore
     volumes:
       - ./docker/pgadmin/servers.json:/pgadmin4/servers.json:ro
       - pgadmin_data:/var/lib/pgadmin
@@ -119,11 +124,11 @@ services:
     build: docker/dbtools
     image: jvdata-dbtools
     environment:
-      PGHOST: postgres
-      PGPORT: "5432"
-      PGDATABASE: jvdata
-      PGUSER: jvdata
-      PGPASSWORD: jvdata
+      PGHOST: ${POSTGRES_HOST:-postgres}
+      PGPORT: ${POSTGRES_PORT:-5432}
+      PGDATABASE: ${POSTGRES_DB:?mise run up}
+      PGUSER: ${POSTGRES_USER:?mise run up}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?mise run up} # ggignore
     command: ["sleep", "infinity"]
     depends_on:
       postgres:
@@ -151,12 +156,13 @@ services:
       TZ: Asia/Tokyo
       # compose のネットワーク内なのでサービス名で引く。32-bit プロセスも
       # Winsock 経由でこの名前を使える。ホストの 127.0.0.1:5432 は経由しない。
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: "5432"
-      POSTGRES_DB: jvdata
-      # 収集側のロール。管理用の jvdata とは別で、管理権限は持たない。
+      # 別ホストの DB を SSH ポート転送で使うときは .env で上書きする。
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:?mise run up}
+      # 収集側のロール。管理用のロールとは別で、管理権限は持たない。
       POSTGRES_USER: jvdata_loader
-      POSTGRES_PASSWORD: jvdata_loader
+      POSTGRES_PASSWORD: ${POSTGRES_LOADER_PASSWORD:?mise run up}
     ports:
       # VNC はパスワード無しで動くので loopback にだけ公開する。
       # 手元のブラウザで http://localhost:6080/vnc.html
