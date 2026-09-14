@@ -41,15 +41,9 @@ DB の運用・監視・チューニングの手順は [docs/postgres-operations
 - `restart` ポリシーが無いので、ホストを再起動しても勝手には戻らない
 - pgAdmin / Grafana / noVNC が同じホストに同居する
 
-本番は別ホストの別構成にする（このファイルを流用しない）。最低限必要なもの:
-
-- 別ホスト（障害ドメインを分ける）
-- 資格情報は secret manager などから注入する（repo に置かない）。本番の
-  `.env.schema` には既定値を書かず、未設定なら起動しないようにする
-- `restart: unless-stopped`
-- `pg_dump` と WAL アーカイブ（PITR）
-- DB のポートをホストに公開しない
-- リソース上限
+本番は別ホストの別構成にしてある: **[deploy/production](deploy/production/README.md)**。
+この compose を流用しないこと（本番側は DB をホストに公開せず、`restart` と
+バックアップを入れてある）。
 
 接続が loopback 限定なのは変える時の事故を防ぐため。別ホストから繋ぐなら
 SSH ポート転送など、経路を意識して開けること。
