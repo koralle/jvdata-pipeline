@@ -29,6 +29,28 @@ docker compose down                                  # データはボリュー�
 
 DB の運用・監視・チューニングの手順は [docs/postgres-operations.md](docs/postgres-operations.md)。
 
+### これは開発用。本番では使わない
+
+このスタックは開発機向けで、本番のデータを載せる前提で作っていない。
+
+- 資格情報が全部この repo に平文で入っている (`jvdata` はスーパーユーザー)。repo は public
+- データは named volume にあるだけ。バックアップも WAL アーカイブも無く、`docker compose down -v` で消える
+- `shared_buffers` などは開発機向けの初期値のまま
+- `restart` ポリシーが無いので、ホストを再起動しても勝手には戻らない
+- pgAdmin / Grafana / noVNC が同じホストに同居する
+
+本番は別ホストの別構成にする（このファイルを流用しない）。最低限必要なもの:
+
+- 別ホスト（障害ドメインを分ける）
+- 資格情報は secret manager などから注入する（repo に置かない）
+- `restart: unless-stopped`
+- `pg_dump` と WAL アーカイブ（PITR）
+- DB のポートをホストに公開しない
+- リソース上限
+
+接続が loopback 限定なのは変える時の事故を防ぐため。別ホストから繋ぐなら
+SSH ポート転送など、経路を意識して開けること。
+
 ### PostgreSQL への接続経路とロール
 
 | どこから | 接続先 | ロール |
