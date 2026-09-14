@@ -26,6 +26,7 @@ jobs:
     outputs:
       rust: ${{ steps.filter.outputs.rust }}
       deps: ${{ steps.filter.outputs.deps }}
+      infra: ${{ steps.filter.outputs.infra }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -48,6 +49,13 @@ jobs:
               - 'Cargo.lock'
               - 'deny.toml'
               - '.github/actions/**'
+              - '.github/workflows/ci.yaml'
+            # コンテナ / インフラ構成 (compose・Dockerfile・シェル・provisioning)
+            infra:
+              - 'compose.yaml'
+              - 'docker/**'
+              - 'deploy/**'
+              - '.env.schema'
               - '.github/workflows/ci.yaml'
 
   format:
@@ -130,6 +138,39 @@ jobs:
       # nextest は doctest を実行しないため個別に実行する
       - run: cargo test --doc --workspace --all-features
 
+  # コンテナ / インフラ構成の静的チェック (コンテナは起動しない)。
+  infra:
+    needs: changes
+    if: needs.changes.outputs.infra == 'true'
+    runs-on: ubuntu-24.04
+    env:
+      # ${VAR:?} を通すためのダミー値。実値は使わない。
+      POSTGRES_DB: ci-dummy
+      POSTGRES_USER: ci-dummy
+      POSTGRES_PASSWORD: ci-dummy
+      POSTGRES_LOADER_PASSWORD: ci-dummy
+      POSTGRES_METRICS_PASSWORD: ci-dummy
+      GF_SECURITY_ADMIN_PASSWORD: ci-dummy
+      PGADMIN_EMAIL: ci@example.com
+      PGADMIN_PASSWORD: ci-dummy
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # ${VAR:?} の不足・YAML・サービス定義の検証。build context の存在も見る。
+      - name: docker compose config (dev)
+        run: docker compose -f compose.yaml config --quiet
+
+      - name: docker compose config (production)
+        run: docker compose -f deploy/production/compose.yaml config --quiet
+
+      - name: shellcheck
+        run: shellcheck deploy/production/backup.sh docker/postgres/init/10-roles.sh docker/wine/entrypoint.sh
+
+      - name: JSON syntax check
+        run: |
+          jq empty docker/grafana/dashboards/jvdata-postgres.json
+          jq empty docker/pgadmin/servers.json
+
   ci-gate:
     name: CI Gate
     if: ${{ always() }}
@@ -140,16 +181,19 @@ jobs:
       - machete
       - test
       - deny
+      - infra
     runs-on: ubuntu-24.04
     env:
       CHANGES_RESULT: ${{ needs.changes.result }}
       RUST_CHANGED: ${{ needs.changes.outputs.rust }}
       DEPS_CHANGED: ${{ needs.changes.outputs.deps }}
+      INFRA_CHANGED: ${{ needs.changes.outputs.infra }}
       FORMAT_RESULT: ${{ needs.format.result }}
       CLIPPY_RESULT: ${{ needs.clippy.result }}
       MACHETE_RESULT: ${{ needs.machete.result }}
       TEST_RESULT: ${{ needs.test.result }}
       DENY_RESULT: ${{ needs.deny.result }}
+      INFRA_RESULT: ${{ needs.infra.result }}
     steps:
       - name: Verify CI results
         shell: bash
@@ -179,4 +223,8 @@ jobs:
 
           if [[ "$DEPS_CHANGED" == "true" ]]; then
             check_success deny "$DENY_RESULT"
+          fi
+
+          if [[ "$INFRA_CHANGED" == "true" ]]; then
+            check_success infra "$INFRA_RESULT"
           fi

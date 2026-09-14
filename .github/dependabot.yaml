@@ -40,3 +40,48 @@ updates:
         patterns:
           - "*"
     open-pull-requests-limit: 10
+
+  # Dockerfile の FROM (タグ/ダイジェスト) の更新
+  - package-ecosystem: "docker"
+    directories:
+      - "/docker/dbtools"
+      - "/docker/postgres"
+      - "/docker/wine"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "04:00"
+      timezone: "Asia/Tokyo"
+    cooldown:
+      default-days: 3
+      include:
+        - "*"
+    assignees:
+      - "koralle"
+    groups:
+      docker-dependencies:
+        patterns:
+          - "*"
+    open-pull-requests-limit: 10
+
+  # compose.yaml の image (タグ/ダイジェスト) の更新
+  - package-ecosystem: "docker-compose"
+    directories:
+      - "/"
+      - "/deploy/production"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "04:00"
+      timezone: "Asia/Tokyo"
+    cooldown:
+      default-days: 3
+      include:
+        - "*"
+    assignees:
+      - "koralle"
+    groups:
+      docker-compose-dependencies:
+        patterns:
+          - "*"
+    open-pull-requests-limit: 10
