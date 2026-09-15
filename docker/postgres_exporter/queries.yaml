@@ -1,0 +1,48 @@
+# 標準の collector に無いメトリクスを SQL で補う。
+#
+# --extend.query-path は非推奨だが、これが custom query の口 (現行版でも動く)。
+# 書式: トップレベルがメトリクス名の接頭辞、metrics が列の扱い。
+# メトリクス名は「接頭辞 + _ + 列名」になる。列名はクエリの結果列と一致させること。
+
+# テーブルとインデックスのサイズ。継続的に蓄積するので増加傾向を見たい。
+pg_table_size:
+  query: |
+    SELECT current_database() AS datname,
+           schemaname,
+           relname AS table,
+           pg_total_relation_size(relid) AS total_bytes
+    FROM pg_stat_user_tables
+  metrics:
+    - datname: { usage: LABEL, description: Name of the database }
+    - schemaname: { usage: LABEL, description: Name of the schema }
+    - table: { usage: LABEL, description: Name of the table }
+    - total_bytes: { usage: GAUGE, description: Total size in bytes }
+
+# インデックスごとのサイズ。どのインデックスが膨らんでいるかを見る。
+pg_index_size:
+  query: |
+    SELECT current_database() AS datname,
+           schemaname,
+           relname AS table,
+           indexrelname AS index,
+           pg_relation_size(indexrelid) AS bytes
+    FROM pg_stat_user_indexes
+  metrics:
+    - datname: { usage: LABEL, description: Name of the database }
+    - schemaname: { usage: LABEL, description: Name of the schema }
+    - table: { usage: LABEL, description: Name of the table }
+    - index: { usage: LABEL, description: Name of the index }
+    - bytes: { usage: GAUGE, description: Index size in bytes }
+
+# WAL の発生量。標準の collector は WAL のサイズしか出さない。
+# pg_stat_wal は累積値なので Grafana 側で rate() して使う。
+pg_stat_wal:
+  query: |
+    SELECT wal_records AS records,
+           wal_fpi AS fpi,
+           wal_bytes AS bytes
+    FROM pg_stat_wal
+  metrics:
+    - records: { usage: COUNTER, description: Total number of WAL records generated }
+    - fpi: { usage: COUNTER, description: Total number of WAL full page images generated }
+    - bytes: { usage: COUNTER, description: Total amount of WAL generated in bytes }

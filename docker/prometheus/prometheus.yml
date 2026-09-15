@@ -1,0 +1,12 @@
+# Prometheus の設定。compose.yaml からマウントして使う。
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # PostgreSQL のメトリクス (postgres_exporter 経由)。
+  # exporter 自体の go_* / process_* メトリクスも同じ target から取れる。
+  - job_name: postgres
+    static_configs:
+      - targets: ["postgres_exporter:9187"]
