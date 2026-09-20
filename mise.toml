@@ -69,8 +69,34 @@ depends = ["fmt-check", "clippy", "test", "test-doc", "machete", "deny"]
 description = "開発用コンテナ一式を起動する"
 # 初回は .env を作ってから起動する
 
+# UI は tailnet の IP に出す (loopback には出さない)。他のマシンからも、この
+# マシン自身からも https://$TS_FQDN:<ポート> で開く。tailnet IP は tailscale
+# から取る。Tailscale が動いていなければ loopback だけになる。
 depends = ["env:init"]
-run = "varlock run -- docker compose up -d"
+run = """
+if [ ! -f docker/tls/tls.key ]; then
+  echo "docker/tls に証明書が無い。先に mise run cert を叩く (UI が HTTPS で起動しない)" >&2
+fi
+TS_BIND_ADDR=$(tailscale ip -4 2>/dev/null | head -1) \
+  varlock run -- docker compose up -d
+"""
+
+# UI 用の TLS 証明書。Tailscale が切った証明書 (90 日) をそのままサービスに渡す。
+# 期限が近づいたら叩き直す (cron にするなら月に一度これ)。
+[tasks.cert]
+description = "Tailscale の証明書を docker/tls に取得し直す"
+run = """
+mkdir -p docker/tls
+# 証明書は root が取ってくる。コンテナ内の UID (grafana 472 / prometheus の
+# nobody / pgadmin 5050) はばらばらでグループにまとめられないので、読める
+# 権限まで root のうちに付ける。
+varlock run -- sh -c 'sudo sh -c "tailscale cert --cert-file=docker/tls/tls.crt --key-file=docker/tls/tls.key $TS_FQDN && chmod 644 docker/tls/tls.crt docker/tls/tls.key"'
+# 証明書は起動時に読まれるので、入れ替えたら 3 つを立て直す。
+# rootless docker では restart だとポート公開が張り直されない (listen しなくなる)
+# ので recreate する。そのとき tailnet IP を渡し直さないと loopback に戻る。
+TS_BIND_ADDR=$(tailscale ip -4 2>/dev/null | head -1) \
+  varlock run -- docker compose up -d --force-recreate prometheus grafana pgadmin
+"""
 
 [tasks."env:init"]
 description = "開発用の .env を作る (既にあれば触らない)"

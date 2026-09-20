@@ -1,5 +1,9 @@
 name: jvdata-pipeline
 
+# UI (prometheus / grafana / pgadmin) は Tailscale の証明書で自分で HTTPS を喋る。
+# 証明書は `mise run cert` が docker/tls に置く (90 日で切れるので更新も同じコマンド)。
+# TS_BIND_ADDR はそのホストの tailnet IP。mise run up が入れる (未設定なら loopback だけ)。
+
 services:
   # PostgreSQL 18。
   #
@@ -71,14 +75,19 @@ services:
     image: prom/prometheus:v3.14.0@sha256:5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115d97a2c7af3b1c21cbb0
     command:
       - --config.file=/etc/prometheus/prometheus.yml
+      - --web.config.file=/etc/prometheus/web.yml
+      # ブラウザから見える URL。リダイレクトとリンクがこれ基準になる。
+      - --web.external-url=https://${TS_FQDN:?mise run up}:9090/
       - --storage.tsdb.path=/prometheus
       # 保持期間。デイスクが許すなら延ばす。
       - --storage.tsdb.retention.time=30d
     volumes:
       - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./docker/prometheus/web.yml:/etc/prometheus/web.yml:ro
+      - ./docker/tls:/etc/prometheus/certs:ro
       - prometheus_data:/prometheus
     ports:
-      - "127.0.0.1:9090:9090"
+      - "${TS_BIND_ADDR:-127.0.0.1}:9090:9090"
     depends_on:
       - postgres_exporter
 
@@ -88,6 +97,13 @@ services:
     environment:
       GF_SECURITY_ADMIN_PASSWORD: ${GF_ADMIN_PASSWORD:?mise run up} # ggignore
       GF_USERS_ALLOW_SIGN_UP: "false"
+      # TLS は Tailscale の証明書を直接使う (前段にプロキシを置かない)。
+      GF_SERVER_PROTOCOL: https
+      GF_SERVER_CERT_FILE: /etc/grafana/certs/tls.crt
+      GF_SERVER_CERT_KEY: /etc/grafana/certs/tls.key
+      # ブラウザから見える URL。末尾の / を落とすと Grafana が起動時に怒る。
+      # ホスト側の公開ポートは 13000 (コンテナ内は 3000 のまま)。
+      GF_SERVER_ROOT_URL: https://${TS_FQDN:?mise run up}:13000/
       # provisioning の postgres.yaml が $__env{} で参照する
       POSTGRES_METRICS_PASSWORD: ${POSTGRES_METRICS_PASSWORD:?mise run up} # ggignore
     volumes:
@@ -96,11 +112,12 @@ services:
       - ./docker/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
       - ./docker/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
       - ./docker/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - ./docker/tls:/etc/grafana/certs:ro
       - grafana_data:/var/lib/grafana
     ports:
       # ホストの 3000 番台は他のアプリとかち合う (実測: ::1:3000 に別アプリ)。
       # 開発機で使われにくい帯に避けて 13000 に出す。
-      - "127.0.0.1:13000:3000"
+      - "${TS_BIND_ADDR:-127.0.0.1}:13000:3000"
     depends_on:
       - prometheus
 
@@ -110,12 +127,17 @@ services:
     environment:
       PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:?mise run up}
       PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:?mise run up} # ggignore
+      # TLS を有効にすると gunicorn が /certs/server.cert と server.key を読む。
+      # 同時に listen ポートが 8443 に変わるので、どちらも明示しておく。
+      PGADMIN_ENABLE_TLS: "True"
+      PGADMIN_LISTEN_PORT: "8443"
     volumes:
       - ./docker/pgadmin/servers.json:/pgadmin4/servers.json:ro
+      - ./docker/tls/tls.crt:/certs/server.cert:ro
+      - ./docker/tls/tls.key:/certs/server.key:ro
       - pgadmin_data:/var/lib/pgadmin
     ports:
-      # コンテナ内では 80 で listen する (PGADMIN_LISTEN_PORT の既定)。
-      - "127.0.0.1:5050:80"
+      - "${TS_BIND_ADDR:-127.0.0.1}:5050:8443"
     depends_on:
       postgres:
         condition: service_healthy

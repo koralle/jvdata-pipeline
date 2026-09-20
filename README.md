@@ -8,14 +8,15 @@
 | --- | --- | --- |
 | `postgres` | PostgreSQL 18。Debian 版に ja_JP.UTF-8 を焼き込んで使う | `127.0.0.1:5432` |
 | `postgres_exporter` | PostgreSQL のメトリクスを Prometheus 形式で公開 | `127.0.0.1:9187` |
-| `prometheus` | メトリクスの収集と保存 (保持 30 日) | `127.0.0.1:9090` |
-| `grafana` | メトリクスの可視化。ダッシュボード同梱 | `127.0.0.1:13000` |
-| `pgadmin` | GUI の DB 運用ツール (接続先登録済み) | `127.0.0.1:5050` |
+| `prometheus` | メトリクスの収集と保存 (保持 30 日) | tailnet IP の `9090` |
+| `grafana` | メトリクスの可視化。ダッシュボード同梱 | tailnet IP の `13000` |
+| `pgadmin` | GUI の DB 運用ツール (接続先登録済み) | tailnet IP の `5050` |
 | `dbtools` | psql / pgcli。DB コンテナに運用ツールを入れないため分離している | - |
 | `wine` | 32-bit Windows COM (JV-Link) を呼ぶための Wine。noVNC のデスクトップ付き | `127.0.0.1:6080` |
 
 ```sh
 mise run up      # = varlock run -- docker compose up -d
+mise run cert    # Tailscale の証明書を取って UI を再起動 (初回と 90 日ごと)
 mise run psql    # psql で DB を触る (pgcli は mise run pgcli / ログは mise run logs)
 mise run down    # 停止 (データはボリュームに残る)
 
@@ -28,9 +29,20 @@ mise run compose:check
 
 | | URL | ログイン |
 | --- | --- | --- |
-| Grafana | <http://127.0.0.1:13000> | `admin` / `.env` の `GF_ADMIN_PASSWORD` |
-| pgAdmin | <http://127.0.0.1:5050> | `jvdata@example.com` / `.env` の `PGADMIN_PASSWORD` |
-| Prometheus | <http://127.0.0.1:9090> | - |
+| Grafana | `https://<TS_FQDN>:13000` | `admin` / `.env` の `GF_ADMIN_PASSWORD` |
+| pgAdmin | `https://<TS_FQDN>:5050` | `jvdata@example.com` / `.env` の `PGADMIN_PASSWORD` |
+| Prometheus | `https://<TS_FQDN>:9090` | - |
+
+UI の 3 つは Tailscale の証明書で自分で HTTPS を喋る (`tailscale serve` も
+前段のプロキシも置いていない)。HTTP では開けない。ブラウザの secure context 判定は
+スキームしか見ないので、tailnet 内でも HTTPS にしておくと Clipboard などが使える。
+
+- `<TS_FQDN>` は MagicDNS 名 (`.env.schema` / `.env` の `TS_FQDN`、既定は開発機の値)。
+  `https://100.x.x.x:13000` のような IP 直打ちは証明書の名前が合わないので弾かれる。
+- 初回だけ `mise run cert` で証明書を取る (`docker/tls/` は git 管理外)。
+  証明書は 90 日で切れるので、期限が近づいたら同じコマンドを叩く。
+- bind 先は tailnet の IP だけ。`http://localhost:13000` のような loopback は使わない
+  (このマシン自身からも上の URL で開く)。
 
 DB の運用・監視・チューニングの手順は [docs/postgres-operations.md](docs/postgres-operations.md)。
 

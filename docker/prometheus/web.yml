@@ -1,0 +1,7 @@
+# Prometheus の web 設定。TLS は前段にプロキシを置かず、Tailscale の証明書を
+# 直接使う (`mise run cert` が docker/tls に置く)。Prometheus は root 以外
+# (nobody) で動くので、証明書は誰でも読める権限にしておく必要がある。
+
+tls_server_config:
+  cert_file: /etc/prometheus/certs/tls.crt
+  key_file: /etc/prometheus/certs/tls.key

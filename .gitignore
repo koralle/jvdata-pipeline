@@ -99,3 +99,9 @@ $RECYCLE.BIN/
 .env
 .env.*
 !.env.schema
+
+# 証明書と鍵。`mise run cert` の出力先 (docker/tls) と、tailscale cert を
+# 素で叩いたときの出力。誤って秘密鍵をコミットしないための保険。
+docker/tls/
+*.ts.net.crt
+*.ts.net.key
