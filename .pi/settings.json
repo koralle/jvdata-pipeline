@@ -1,5 +1,6 @@
 {
   "packages": [
-    "git:github.com/DietrichGebert/ponytail"
+    "git:github.com/DietrichGebert/ponytail",
+    "git:github.com/ayghri/i-have-adhd"
   ]
 }
