@@ -1,0 +1,30 @@
+# yamllint の設定。
+#
+# pi-lens などが yamllint を既定ルールで走らせるので、このリポジトリの書き方に
+# 合わせて緩めるところだけ緩める。実行:
+#
+#   yamllint $(git ls-files '*.yaml' '*.yml')
+extends: default
+
+rules:
+  # リポジトリの YAML は先頭の `---` を書かない
+  document-start: disable
+
+  # ` # ggignore` (gitleaks) を 1 文字空けで書いている
+  comments:
+    min-spaces-from-content: 1
+
+  # GitHub Actions の `on:` を真偽値として指摘させない
+  truthy:
+    check-keys: false
+
+  # postgres_exporter の queries.yaml は `{ usage: LABEL, ... }` と書く
+  braces:
+    max-spaces-inside: 1
+
+  # compose はダイジェスト付きのイメージと接続文字列を 1 行で書くので除外する
+  line-length:
+    max: 100
+    ignore: |
+      compose.yaml
+      deploy/production/compose.yaml

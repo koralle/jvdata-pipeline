@@ -11,6 +11,9 @@
 # Git フック
 "npm:lefthook" = "2.1.12"
 
+# 環境変数 / シークレットの検証と注入 (.env.schema)
+"npm:varlock" = "1.19.0"
+
 # 開発環境をセットアップする (ツール導入 + Git フック有効化)
 [tasks.setup]
 description = "開発環境をセットアップする"
@@ -57,3 +60,96 @@ depends = ["fmt-check", "clippy"]
 [tasks.ci]
 description = "CI と同じチェックをまとめて実行する (直列: mise run -j 1 ci)"
 depends = ["fmt-check", "clippy", "test", "test-doc", "machete", "deny"]
+
+# 開発用コンテナ
+#
+# 資格情報は compose.yaml に直書きせず、varlock が .env.schema に従って注入する。
+# compose 側は未設定の変数で落ちるので、docker compose はここ経由で叩く。
+[tasks.up]
+description = "開発用コンテナ一式を起動する"
+# 初回は .env を作ってから起動する
+
+depends = ["env:init"]
+run = "varlock run -- docker compose up -d"
+
+[tasks."env:init"]
+description = "開発用の .env を作る (既にあれば触らない)"
+run = """
+if [ ! -f .env ]; then
+  umask 077
+  {
+    printf 'POSTGRES_PASSWORD=%s\n' "$(openssl rand -hex 16)"
+    printf 'POSTGRES_LOADER_PASSWORD=%s\n' "$(openssl rand -hex 16)"
+    printf 'POSTGRES_METRICS_PASSWORD=%s\n' "$(openssl rand -hex 16)"
+    printf 'GF_ADMIN_PASSWORD=%s\n' "$(openssl rand -hex 16)"
+    printf 'PGADMIN_PASSWORD=%s\n' "$(openssl rand -hex 16)"
+  } > .env
+  echo ".env を作成しました (開発機用のランダムな値。git 管理外)"
+fi
+"""
+
+[tasks.down]
+description = "開発用コンテナ一式を停止する"
+run = "varlock run -- docker compose down"
+
+[tasks.psql]
+description = "psql で開発用 DB に繋ぐ"
+run = "varlock run -- docker compose exec dbtools psql"
+
+[tasks.pgcli]
+description = "pgcli で開発用 DB に繋ぐ"
+run = "varlock run -- docker compose exec dbtools pgcli"
+
+[tasks.logs]
+description = "コンテナのログを見る"
+run = "varlock run -- docker compose logs -f"
+
+# compose ファイルの検証。YAML として読めるか、compose のスキーマに合うか、
+# 変数が解決できるかを見る (行の長さなどの見た目は yamllint の仕事)。
+# 起動も停止もしないので、設定を変えた後・反映する前に叩く。
+# 資格情報を要求するので、CI や .env の無い clone では動かない。
+[tasks."compose:check"]
+description = "compose.yaml を検証する (開発用。起動しない)"
+run = "varlock run -- docker compose config -q"
+
+# 本番用コンテナ
+#
+# 開発用とは別プロジェクト・別ディレクトリで、別の .env.schema / .env を使う。
+# dir で必ず deploy/production に入ってから実行する。root で
+# `varlock run -- docker compose -f deploy/production/compose.yaml ...` と叩くと
+# 開発用の .env が環境変数として注入され、それが本番の .env に勝つ。本番 DB は
+# 初回起動時のパスワードで初期化されるので、後から直そうとしても直らない。
+# 準備と手順は deploy/production/README.md。
+#
+# 本番ホストで mise から叩くときは MISE_TASK_RUN_AUTO_INSTALL=false を付ける。
+# root の mise.toml は開発ツール (Rust / nextest など) も宣言しているため、既定の
+# ままだとそれらを本番ホストに入れにいく。
+[tasks."prod:up"]
+description = "本番用コンテナを起動する (deploy/production)"
+dir = "deploy/production"
+run = "varlock run -- docker compose up -d"
+
+[tasks."prod:check"]
+description = "本番用 compose を検証する (起動しない)"
+dir = "deploy/production"
+run = "varlock run -- docker compose config -q"
+
+[tasks."prod:down"]
+description = "本番用コンテナを停止する"
+dir = "deploy/production"
+run = "varlock run -- docker compose down"
+
+[tasks."prod:psql"]
+description = "psql で本番 DB に繋ぐ"
+dir = "deploy/production"
+run = "varlock run -- docker compose exec dbtools psql"
+
+[tasks."prod:pgcli"]
+description = "pgcli で本番 DB に繋ぐ"
+dir = "deploy/production"
+run = "varlock run -- docker compose exec dbtools pgcli"
+
+[tasks."prod:logs"]
+description = "本番コンテナのログを見る"
+dir = "deploy/production"
+run = "varlock run -- docker compose logs -f"

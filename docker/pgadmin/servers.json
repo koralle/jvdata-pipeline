@@ -1,0 +1,14 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "jvdata",
+      "Group": "jvdata-pipeline",
+      "Host": "postgres",
+      "Port": 5432,
+      "MaintenanceDB": "jvdata",
+      "Username": "jvdata",
+      "SSLMode": "prefer",
+      "Comment": "パスワードは compose.yaml の POSTGRES_PASSWORD (jvdata)"
+    }
+  }
+}

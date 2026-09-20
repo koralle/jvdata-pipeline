@@ -1,0 +1,11 @@
+# リポジトリの JSON をダッシュボードとして読み込む。
+apiVersion: 1
+
+providers:
+  - name: jvdata
+    folder: jvdata
+    type: file
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards

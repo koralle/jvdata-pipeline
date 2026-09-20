@@ -1,0 +1,182 @@
+name: jvdata-prod
+
+# 本番用スタック。開発用 (リポジトリ直下の compose.yaml) と同じマシンで同居できる。
+# プロジェクト名 (jvdata-prod) が別なのでコンテナ・ボリューム・ネットワークは
+# 分かれる。ホストのポートだけ重なるので、開発用と違う番号に割り当ててある
+# (Grafana 23000 / Prometheus 19090 / noVNC 16080)。
+#
+# 開発用との違い:
+#
+#   - 資格情報は環境変数から渡す。検証は varlock (.env.schema は既定値なし)
+#   - restart: unless-stopped (ホスト再起動で戻ってくる)
+#   - DB はホストに公開しない (exec dbtools psql で入る)。noVNC は loopback のみ
+#   - 設定は postgresql.local.conf で上書きする (メモリ・WAL アーカイブ)
+#   - 毎日 pg_dump / 毎週 pg_basebackup を取る backup が同居する
+#   - pgAdmin は置かない (管理 UI を本番ホストに置かない)
+#
+# 手順は deploy/production/README.md。検証は mise run prod:check。
+
+services:
+  postgres:
+    build: ../../docker/postgres
+    image: jvdata-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?deploy/production/README.md} # ggignore
+      POSTGRES_USER: ${POSTGRES_USER:?deploy/production/README.md}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?deploy/production/README.md} # ggignore
+      # init スクリプト (10-roles.sh) がロールを作るのに使う
+      POSTGRES_LOADER_PASSWORD: ${POSTGRES_LOADER_PASSWORD:?deploy/production/README.md} # ggignore
+      POSTGRES_METRICS_PASSWORD: ${POSTGRES_METRICS_PASSWORD:?deploy/production/README.md} # ggignore
+      TZ: Asia/Tokyo
+    command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
+    volumes:
+      - pgdata:/var/lib/postgresql
+      - ../../docker/postgres/conf/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      # ホスト固有の上書き (メモリ・WAL アーカイブ) は postgresql.conf の
+      # include_if_exists から読まれる。
+      - ./postgresql.local.conf:/etc/postgresql/conf.d/local.conf:ro
+      # 認証設定もリポジトリ側で持つ (pg_basebackup 用の replication ルール含む)
+      - ./pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+      - ../../docker/postgres/init:/docker-entrypoint-initdb.d:ro
+      - walarchive:/var/lib/postgresql/wal-archive
+    # 並列クエリの動的共有メモリは /dev/shm を使う。Docker の既定 (64MB) だと
+    # 「could not resize shared memory segment」で落ちるので広げておく。
+    shm_size: "1gb"
+    healthcheck:
+      test: ["CMD", "pg_isready"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  postgres_exporter:
+    image: prometheuscommunity/postgres-exporter:v0.20.1@sha256:ac5ec343104fae0e2d84a27bb8d69b38430a11910c5382cad85d478d2bab713e
+    restart: unless-stopped
+    command:
+      - --collector.stat_statements
+      - --collector.stat_checkpointer
+      - --collector.database_wraparound
+      - --extend.query-path=/etc/postgres_exporter/queries.yaml
+      - --config.file=
+    environment:
+      DATA_SOURCE_URI: postgres:5432/jvdata?sslmode=disable
+      DATA_SOURCE_USER: jvdata_metrics
+      DATA_SOURCE_PASS: ${POSTGRES_METRICS_PASSWORD:?deploy/production/README.md} # ggignore
+    volumes:
+      - ../../docker/postgres_exporter/queries.yaml:/etc/postgres_exporter/queries.yaml:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  prometheus:
+    image: prom/prometheus:v3.14.0@sha256:5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115d97a2c7af3b1c21cbb0
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      # 本番は長めに取る (容量の増加傾向を見るため)
+      - --storage.tsdb.retention.time=90d
+    volumes:
+      - ../../docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      # 開発用の Prometheus が 9090 なのでずらす
+      - "127.0.0.1:19090:9090"
+    depends_on:
+      - postgres_exporter
+
+  grafana:
+    image: grafana/grafana:13.2.1@sha256:f772d434e8fab0049deb2b1b30abd43342bcfca1537614aa8d36080232cf4283
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD:?deploy/production/README.md} # ggignore
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      # provisioning の postgres.yaml が $__env{} で参照する
+      POSTGRES_METRICS_PASSWORD: ${POSTGRES_METRICS_PASSWORD:?deploy/production/README.md} # ggignore
+    volumes:
+      - ../../docker/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ../../docker/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ../../docker/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      # 開発用の Grafana が 13000 なのでずらす
+      - "127.0.0.1:23000:3000"
+    depends_on:
+      - prometheus
+
+  # psql / pgcli。DB コンテナに運用ツールを入れないため分離している。
+  dbtools:
+    build: ../../docker/dbtools
+    image: jvdata-dbtools
+    restart: unless-stopped
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGDATABASE: ${POSTGRES_DB:?deploy/production/README.md}
+      PGUSER: ${POSTGRES_USER:?deploy/production/README.md}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?deploy/production/README.md} # ggignore
+    command: ["sleep", "infinity"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # 32-bit Windows COM (JV-Link) を実行する場所。収集処理はここで動かす。
+  # noVNC は loopback のみ (同じマシンなら http://127.0.0.1:16080/vnc.html)。
+  wine:
+    build: ../../docker/wine
+    image: jvdata-wine
+    platform: linux/amd64
+    # 再起動ループにしない。起動時の 32-bit スモークテストで落ちた場合、それは
+    # 直さない限り直らないので、数回試して止める (動いているのに落ちるなら
+    # 再起動でごまかさず気付けるようにする)。
+    restart: on-failure:5
+    environment:
+      DISPLAY: ":1"
+      WINEPREFIX: /wineprefix
+      WINEARCH: win64
+      LANG: ja_JP.UTF-8
+      LC_ALL: ja_JP.UTF-8
+      TZ: Asia/Tokyo
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:?deploy/production/README.md}
+      # 収集側のロール。管理用のロールは渡さない。
+      POSTGRES_USER: jvdata_loader
+      POSTGRES_PASSWORD: ${POSTGRES_LOADER_PASSWORD:?deploy/production/README.md} # ggignore
+    ports:
+      # 開発用の wine が 6080 なのでずらす
+      - "127.0.0.1:16080:6080"
+    volumes:
+      - wineprefix:/wineprefix
+
+  # バックアップ。毎日 pg_dump、毎週 pg_basebackup (PITR 用)。
+  #
+  # バックアップ先はこのホストのボリュームなので、別ホストへのコピーは別途必要
+  # (README 参照)。ここが埋まると DB も止まるので、容量を監視すること。
+  backup:
+    image: jvdata-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?deploy/production/README.md}
+      POSTGRES_USER: ${POSTGRES_USER:?deploy/production/README.md}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?deploy/production/README.md} # ggignore
+      BACKUP_KEEP_DUMPS: "7"
+      BACKUP_KEEP_BASE: "2"
+    volumes:
+      - ./backup.sh:/usr/local/bin/backup.sh:ro
+      - backup:/backup
+      # WAL アーカイブの世代管理 (pg_archivecleanup) のために postgres と
+      # 同じパスでマウントする。残っているベースより前の WAL しか消さない。
+      - walarchive:/var/lib/postgresql/wal-archive
+    entrypoint: ["/bin/sh", "/usr/local/bin/backup.sh"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  walarchive:
+  backup:
+  prometheus_data:
+  grafana_data:
+  wineprefix:

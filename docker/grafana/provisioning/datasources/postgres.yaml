@@ -1,0 +1,23 @@
+# PostgreSQL を直接引くデータソース。
+#
+# Prometheus 側は時系列 (推移・レート) 用、こちらは pg_stat_statements や
+# pg_stat_activity の中身を SQL パネルで見る用。接続は読み取り専用のロール
+# (jvdata_metrics) を使う。
+apiVersion: 1
+
+datasources:
+  - name: PostgreSQL
+    uid: postgres
+    type: postgres
+    access: proxy
+    url: postgres:5432
+    user: jvdata_metrics
+    secureJsonData:
+      # Grafana の provisioning は $__env{} を展開する。
+      # 値は compose.yaml が grafana サービスに渡す。
+      password: $__env{POSTGRES_METRICS_PASSWORD}
+    jsonData:
+      database: jvdata
+      sslmode: disable
+      postgresVersion: 1800
+      timescaledb: false

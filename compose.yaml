@@ -1,0 +1,183 @@
+name: jvdata-pipeline
+
+services:
+  # PostgreSQL 18。
+  #
+  # 18 からデータディレクトリが /var/lib/postgresql/18/docker に変わり、
+  # ボリュームの宣言も親ディレクトリ /var/lib/postgresql になった。
+  # 旧来の /var/lib/postgresql/data に載せても PGDATA には使われない。
+  postgres:
+    # Debian 版。alpine (musl) にはロケールデータが無く、lc_time などを設定しても
+    # 無言で効かない (to_char の TMMonth が英語のままになる) ため、
+    # docker/postgres/Dockerfile で ja_JP.UTF-8 を焼き込んでいる。
+    build: docker/postgres
+    image: jvdata-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?mise run up}
+      # 管理用のロール。ホスト側はこれで繋ぐ。
+      POSTGRES_USER: ${POSTGRES_USER:?mise run up}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?mise run up} # ggignore
+      # init スクリプト (10-roles.sh) がロールを作るのに使う
+      POSTGRES_LOADER_PASSWORD: ${POSTGRES_LOADER_PASSWORD:?mise run up} # ggignore
+      POSTGRES_METRICS_PASSWORD: ${POSTGRES_METRICS_PASSWORD:?mise run up} # ggignore
+      # initdb が timezone / log_timezone を決めるのに使う。運用中の値は
+      # docker/postgres/conf/postgresql.conf 側で指定している。
+      TZ: Asia/Tokyo
+    # 設定はリポジトリ側 (docker/postgres/conf/postgresql.conf) を読ませる。
+    # データディレクトリの外に置くので、ボリュームの作成時期に関係なく効く。
+    command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql
+      - ./docker/postgres/conf/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      # 初回起動時だけ走る。既存のボリュームには効かない。
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    # 並列クエリの動的共有メモリは /dev/shm を使う。Docker の既定 (64MB) だと
+    # 「could not resize shared memory segment」で落ちるので広げておく。
+    shm_size: "256mb"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "jvdata", "-d", "jvdata"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # PostgreSQL のメトリクスを Prometheus 形式で公開する。
+  # 接続は統計ビューを読むだけの専用ロール (jvdata_metrics)。
+  postgres_exporter:
+    image: prometheuscommunity/postgres-exporter:v0.20.1@sha256:ac5ec343104fae0e2d84a27bb8d69b38430a11910c5382cad85d478d2bab713e
+    # 既定で無効な collector を有効にする。テーブル/インデックスのサイズは標準に
+    # 無いので、custom query (docker/postgres_exporter/queries.yaml) で補う。
+    command:
+      - --collector.stat_statements           # queries/sec
+      - --collector.stat_checkpointer         # checkpoint
+      - --collector.database_wraparound       # XID の周回
+      - --extend.query-path=/etc/postgres_exporter/queries.yaml
+      # 設定ファイルは使わない (毎回 "No such file" の警告が出るのを避ける)
+      - --config.file=
+    environment:
+      DATA_SOURCE_NAME: "postgresql://jvdata_metrics:${POSTGRES_METRICS_PASSWORD:?mise run up}@postgres:5432/${POSTGRES_DB:?mise run up}?sslmode=disable" # ggignore
+    volumes:
+      - ./docker/postgres_exporter/queries.yaml:/etc/postgres_exporter/queries.yaml:ro
+    ports:
+      # 生のメトリクスを見たいとき用: http://localhost:9187/metrics
+      - "127.0.0.1:9187:9187"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # メトリクスの収集と保存。
+  prometheus:
+    image: prom/prometheus:v3.14.0@sha256:5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115d97a2c7af3b1c21cbb0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      # 保持期間。デイスクが許すなら延ばす。
+      - --storage.tsdb.retention.time=30d
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    depends_on:
+      - postgres_exporter
+
+  # 可視化。データソースとダッシュボードは provisioning で自動登録する。
+  grafana:
+    image: grafana/grafana:13.2.1@sha256:f772d434e8fab0049deb2b1b30abd43342bcfca1537614aa8d36080232cf4283
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GF_ADMIN_PASSWORD:?mise run up} # ggignore
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      # provisioning の postgres.yaml が $__env{} で参照する
+      POSTGRES_METRICS_PASSWORD: ${POSTGRES_METRICS_PASSWORD:?mise run up} # ggignore
+    volumes:
+      # provisioning 全体ではなく必要なサブディレクトリだけ載せる
+      # (イメージ側の plugins / alerting 用のディレクトリを消さないため)。
+      - ./docker/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./docker/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./docker/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      # ホストの 3000 番台は他のアプリとかち合う (実測: ::1:3000 に別アプリ)。
+      # 開発機で使われにくい帯に避けて 13000 に出す。
+      - "127.0.0.1:13000:3000"
+    depends_on:
+      - prometheus
+
+  # GUI の DB 運用ツール。接続先は servers.json で登録済み。
+  pgadmin:
+    image: dpage/pgadmin4:9.17@sha256:2f4ce946ddf8360680d7eff4eaba1d91859eb6b4003e6623bad5c63a322c2f4d
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:?mise run up}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:?mise run up} # ggignore
+    volumes:
+      - ./docker/pgadmin/servers.json:/pgadmin4/servers.json:ro
+      - pgadmin_data:/var/lib/pgadmin
+    ports:
+      # コンテナ内では 80 で listen する (PGADMIN_LISTEN_PORT の既定)。
+      - "127.0.0.1:5050:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # psql / pgcli。DB コンテナに運用ツールを入れないため別コンテナにしている。
+  # 使い方: docker compose exec dbtools psql
+  #         docker compose exec dbtools pgcli
+  dbtools:
+    build: docker/dbtools
+    image: jvdata-dbtools
+    environment:
+      PGHOST: ${POSTGRES_HOST:-postgres}
+      PGPORT: ${POSTGRES_PORT:-5432}
+      PGDATABASE: ${POSTGRES_DB:?mise run up}
+      PGUSER: ${POSTGRES_USER:?mise run up}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?mise run up} # ggignore
+    command: ["sleep", "infinity"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # 32-bit プロセスから 32-bit Windows COM コンポーネント (JV-Link) を呼ぶための Wine。
+  #
+  # x86_64 専用。JV-Link もそれを動かす 32-bit プロセスも x86 のバイナリで、
+  # ARM ホストから実行する経路は無い (docs の wine_docker.md と同じ結論)。
+  # そのため platform を固定し、起動時に 32-bit のスモークテストを必ず通す。
+  wine:
+    build: docker/wine
+    image: jvdata-wine
+    platform: linux/amd64
+    depends_on:
+      # postgres が接続を受け付けてから起動する。
+      postgres:
+        condition: service_healthy
+    environment:
+      DISPLAY: ":1"
+      WINEPREFIX: /wineprefix
+      WINEARCH: win64
+      LANG: ja_JP.UTF-8
+      LC_ALL: ja_JP.UTF-8
+      TZ: Asia/Tokyo
+      # compose のネットワーク内なのでサービス名で引く。32-bit プロセスも
+      # Winsock 経由でこの名前を使える。ホストの 127.0.0.1:5432 は経由しない。
+      # 別ホストの DB を SSH ポート転送で使うときは .env で上書きする。
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:?mise run up}
+      # 収集側のロール。管理用のロールとは別で、管理権限は持たない。
+      POSTGRES_USER: jvdata_loader
+      POSTGRES_PASSWORD: ${POSTGRES_LOADER_PASSWORD:?mise run up}
+    ports:
+      # VNC はパスワード無しで動くので loopback にだけ公開する。
+      # 手元のブラウザで http://localhost:6080/vnc.html
+      - "127.0.0.1:6080:6080"
+    volumes:
+      # prefix を永続化する。手作業で入れた JV-Link と利用登録は
+      # docker compose down では消えない。
+      - wineprefix:/wineprefix
+
+volumes:
+  pgdata:
+  wineprefix:
+  prometheus_data:
+  grafana_data:
+  pgadmin_data:
