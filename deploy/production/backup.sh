@@ -21,19 +21,30 @@ BASE_INTERVAL="${BACKUP_BASE_INTERVAL_SECONDS:-604800}"
 prune() {
   dir="$1"
   keep="$2"
-  ls -1dt "$dir"/* 2>/dev/null | tail -n +$((keep + 1)) | while read -r old; do
+  # .incomplete は残っていても世代として数えない (中断した残骸は含めない)
+  ls -1dt "$dir"/* 2>/dev/null | grep -v '\.incomplete$' | tail -n +$((keep + 1)) | while read -r old; do
     echo "backup: removing $old"
     rm -rf "$old"
   done
 }
+
+# dump / base は呼び出し側で `|| echo` / `if` と組んで呼ばれるので、関数の中では
+# set -e が効かない (POSIX の仕様。|| の左辺や if の条件では errexit が抑制される)。
+# 失敗したらそこで return しないと、そのまま prune まで進んで健全な世代を
+# 消してしまう。確定名に直接書くと、失敗した分が最新世代として prune の
+# 枠を食うので、.incomplete に書いて成功してから mv する。
 
 dump() {
   mkdir -p "$DUMP_DIR"
   stamp="$(date +%Y%m%d-%H%M%S)"
   file="$DUMP_DIR/$POSTGRES_DB-$stamp.dump"
   echo "backup: pg_dump -> $file"
-  pg_dump --host=postgres --username="$POSTGRES_USER" --dbname="$POSTGRES_DB" \
-    --format=custom --file="$file"
+  if ! pg_dump --host=postgres --username="$POSTGRES_USER" --dbname="$POSTGRES_DB" \
+    --format=custom --file="$file.incomplete"; then
+    rm -f "$file.incomplete"
+    return 1
+  fi
+  mv "$file.incomplete" "$file" || return 1
   prune "$DUMP_DIR" "$KEEP_DUMPS"
 }
 
@@ -42,8 +53,12 @@ base() {
   stamp="$(date +%Y%m%d-%H%M%S)"
   dir="$BASE_DIR/$stamp"
   echo "backup: pg_basebackup -> $dir"
-  pg_basebackup --host=postgres --username="$POSTGRES_USER" \
-    --pgdata="$dir" --format=tar --gzip --wal-method=stream --checkpoint=fast
+  if ! pg_basebackup --host=postgres --username="$POSTGRES_USER" \
+    --pgdata="$dir.incomplete" --format=tar --gzip --wal-method=stream --checkpoint=fast; then
+    rm -rf "$dir.incomplete"
+    return 1
+  fi
+  mv "$dir.incomplete" "$dir" || return 1
   prune "$BASE_DIR" "$KEEP_BASE"
 }
 
@@ -58,8 +73,13 @@ while true; do
   dump || echo "backup: dump failed" >&2
   now="$(date +%s)"
   if [ "$now" -ge "$next_base" ]; then
-    base || echo "backup: base backup failed" >&2
-    next_base=$((now + BASE_INTERVAL))
+    if base; then
+      next_base=$((now + BASE_INTERVAL))
+    else
+      echo "backup: base backup failed" >&2
+      # 失敗したまま 1 周期 (1 週間) 待たず、次の dump 周期でやり直す
+      next_base=$((now + DUMP_INTERVAL))
+    fi
   fi
   sleep "$DUMP_INTERVAL"
 done
