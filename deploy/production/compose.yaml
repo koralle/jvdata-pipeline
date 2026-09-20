@@ -165,6 +165,9 @@ services:
     volumes:
       - ./backup.sh:/usr/local/bin/backup.sh:ro
       - backup:/backup
+      # WAL アーカイブの世代管理 (pg_archivecleanup) のために postgres と
+      # 同じパスでマウントする。残っているベースより前の WAL しか消さない。
+      - walarchive:/var/lib/postgresql/wal-archive
     entrypoint: ["/bin/sh", "/usr/local/bin/backup.sh"]
     depends_on:
       postgres:

@@ -95,6 +95,13 @@ varlock run -- docker compose exec dbtools psql    # 直接叩く場合
 | 毎日 | `pg_dump -Fc` | `/backup/dump` | 7 |
 | 毎週 | `pg_basebackup -Ft -z` | `/backup/base` | 2 |
 
+WAL アーカイブ (`walarchive` ボリューム) は、ベースバックアップが成功する
+たびに `pg_archivecleanup` で世代管理している。残っているベースのうち
+最古のものの START WAL より前の分は replay できないので消す。ベースが
+取れていない間は境が進まないので、アーカイブだけ先に消えることはない。
+それでも WAL は増え続ける (アイドル時でも `archive_timeout` で 15 分ごとに
+セグメントが切れる) ので、容量の監視は要る。
+
 ```sh
 varlock run -- docker compose exec backup ls -l /backup/dump
 varlock run -- docker compose run --rm -e BACKUP_RUN_ONCE=1 backup   # 手で 1 回
