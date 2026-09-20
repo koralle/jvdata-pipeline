@@ -18,6 +18,9 @@
 mise run up      # = varlock run -- docker compose up -d
 mise run psql    # psql で DB を触る (pgcli は mise run pgcli / ログは mise run logs)
 mise run down    # 停止 (データはボリュームに残る)
+
+# 設定を変えたときは、起動せずに検証できる (`docker compose config -q`)
+mise run compose:check
 ```
 
 `docker compose` を直接叩きたいときは `varlock run -- docker compose ...` 経由にする。
@@ -25,9 +28,9 @@ mise run down    # 停止 (データはボリュームに残る)
 
 | | URL | ログイン |
 | --- | --- | --- |
-| Grafana | http://127.0.0.1:13000 | `admin` / `.env` の `GF_ADMIN_PASSWORD` |
-| pgAdmin | http://127.0.0.1:5050 | `jvdata@example.com` / `.env` の `PGADMIN_PASSWORD` |
-| Prometheus | http://127.0.0.1:9090 | - |
+| Grafana | <http://127.0.0.1:13000> | `admin` / `.env` の `GF_ADMIN_PASSWORD` |
+| pgAdmin | <http://127.0.0.1:5050> | `jvdata@example.com` / `.env` の `PGADMIN_PASSWORD` |
+| Prometheus | <http://127.0.0.1:9090> | - |
 
 DB の運用・監視・チューニングの手順は [docs/postgres-operations.md](docs/postgres-operations.md)。
 
@@ -41,7 +44,9 @@ DB の運用・監視・チューニングの手順は [docs/postgres-operations
 - `restart` ポリシーが無いので、ホストを再起動しても勝手には戻らない
 - pgAdmin / Grafana / noVNC が同じホストに同居する
 
-本番は別ホストの別構成にしてある: **[deploy/production](deploy/production/README.md)**。
+本番は別構成にしてある: **[deploy/production](deploy/production/README.md)**。
+同じマシンで同居できる (プロジェクト名もポートも別)。起動は root から
+`mise run prod:up` (`mise run prod:psql` / `mise run prod:logs` / `mise run prod:down`)。
 この compose を流用しないこと（本番側は DB をホストに公開せず、`restart` と
 バックアップを入れてある）。
 
@@ -106,6 +111,6 @@ JV-Link は再配布できないのでイメージには入っていない。Win
 `wineprefix` ボリュームにあるため、一度入れれば `docker compose down` では消えない。
 
 1. 入手したインストーラをコンテナへコピーする (`docker compose cp ./JVLink.exe wine:/tmp/`)
-2. http://localhost:6080/vnc.html を開く
+2. <http://localhost:6080/vnc.html> を開く
 3. デスクトップ上でインストーラを実行し、JRA-VAN の利用規約に同意して利用登録する
 4. `docker compose restart wine` を実行し、起動ログから JV-Link の未導入警告が消えたことを確認する

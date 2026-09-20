@@ -1,18 +1,20 @@
 name: jvdata-prod
 
-# 本番用スタック。開発用 (リポジトリ直下の compose.yaml) とは別のホストで動かす。
+# 本番用スタック。開発用 (リポジトリ直下の compose.yaml) と同じマシンで同居できる。
+# プロジェクト名 (jvdata-prod) が別なのでコンテナ・ボリューム・ネットワークは
+# 分かれる。ホストのポートだけ重なるので、開発用と違う番号に割り当ててある
+# (Grafana 23000 / Prometheus 19090 / noVNC 16080)。
 #
 # 開発用との違い:
 #
 #   - 資格情報は環境変数から渡す。検証は varlock (.env.schema は既定値なし)
 #   - restart: unless-stopped (ホスト再起動で戻ってくる)
-#   - DB と noVNC はホストに公開しない (入るときは SSH ポート転送)
+#   - DB はホストに公開しない (exec dbtools psql で入る)。noVNC は loopback のみ
 #   - 設定は postgresql.local.conf で上書きする (メモリ・WAL アーカイブ)
 #   - 毎日 pg_dump / 毎週 pg_basebackup を取る backup が同居する
-#   - pgAdmin は置かない (管理 UI を本番ホストに置かない。手元の pgAdmin から
-#     SSH ポート転送で繋ぐ)
+#   - pgAdmin は置かない (管理 UI を本番ホストに置かない)
 #
-# 手順は deploy/production/README.md。
+# 手順は deploy/production/README.md。検証は mise run prod:check。
 
 services:
   postgres:
@@ -78,7 +80,8 @@ services:
       - ../../docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
     ports:
-      - "127.0.0.1:9090:9090"
+      # 開発用の Prometheus が 9090 なのでずらす
+      - "127.0.0.1:19090:9090"
     depends_on:
       - postgres_exporter
 
@@ -96,7 +99,8 @@ services:
       - ../../docker/grafana/dashboards:/var/lib/grafana/dashboards:ro
       - grafana_data:/var/lib/grafana
     ports:
-      - "127.0.0.1:13000:3000"
+      # 開発用の Grafana が 13000 なのでずらす
+      - "127.0.0.1:23000:3000"
     depends_on:
       - prometheus
 
@@ -117,7 +121,7 @@ services:
         condition: service_healthy
 
   # 32-bit Windows COM (JV-Link) を実行する場所。収集処理はここで動かす。
-  # noVNC は loopback のみ (手元から見たいときは SSH ポート転送)。
+  # noVNC は loopback のみ (同じマシンなら http://127.0.0.1:16080/vnc.html)。
   wine:
     build: ../../docker/wine
     image: jvdata-wine
@@ -140,7 +144,8 @@ services:
       POSTGRES_USER: jvdata_loader
       POSTGRES_PASSWORD: ${POSTGRES_LOADER_PASSWORD:?deploy/production/README.md} # ggignore
     ports:
-      - "127.0.0.1:6080:6080"
+      # 開発用の wine が 6080 なのでずらす
+      - "127.0.0.1:16080:6080"
     volumes:
       - wineprefix:/wineprefix
 

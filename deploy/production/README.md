@@ -1,21 +1,23 @@
 # 本番スタック
 
-JRA-VAN のデータを実際に蓄積するホスト用。**x86_64 の Linux 1 台**を占有する前提
-(JV-Link が 32-bit x86 なので、wine を動かせるホストが要る)。
+JRA-VAN のデータを実際に蓄積するホスト用。**x86_64 の Linux** が要る
+(JV-Link が 32-bit x86 なので、wine を動かせるホスト)。
 
-開発用スタック (リポジトリ直下) とは別物。共有しているのはイメージのビルド元
-(`docker/`) と設定・ダッシュボードのファイルだけ。
+開発用スタック (リポジトリ直下) とは別プロジェクト・別ディレクトリのままで、
+同じマシンで同居できる。ホストのポートは重ならない番号に割り当ててある
+(Grafana 23000 / Prometheus 19090 / noVNC 16080)。共有しているのはイメージの
+ビルド元 (`docker/`) と設定・ダッシュボードのファイルだけ。
 
 ## 何が違うか
 
 | | 開発用 | 本番用 |
 | --- | --- | --- |
 | 資格情報 | `.env` に自動生成した使い捨ての値 | 環境変数か、手元で用意した `.env` (repo に値は無い) |
-| Postgres の待ち受け | `127.0.0.1:5432` に公開 | **公開しない** (SSH ポート転送で入る) |
+| Postgres の待ち受け | `127.0.0.1:5432` に公開 | **公開しない** (`exec dbtools psql` で入る) |
 | 再起動 | 手動 | `restart: unless-stopped` |
 | PostgreSQL の設定 | `docker/postgres/conf/postgresql.conf` | それ + `postgresql.local.conf` で上書き |
 | バックアップ | 無し (消して良い) | `pg_dump` 毎日 + `pg_basebackup` 毎週 |
-| pgAdmin | 置く | 置かない (手元の pgAdmin から SSH 経由) |
+| pgAdmin | 置く | 置かない (管理 UI を本番ホストに置かない) |
 | Prometheus の保持 | 30 日 | 90 日 |
 
 ## 準備 (ホストで 1 回)
@@ -25,6 +27,7 @@ JRA-VAN のデータを実際に蓄積するホスト用。**x86_64 の Linux 1 
 ```sh
 npm install -g varlock@1.19.0     # mise で入れても良い
 
+# 新しく用意したホストなら clone する (開発用と同じマシンなら不要)
 git clone <repo> && cd <repo>/deploy/production
 
 # 値を作る。.env.schema が要求するのはこの 4 つだけ
@@ -45,7 +48,12 @@ secret manager を使うなら、`varlock run` の前段で環境変数に入れ
 ## 起動
 
 ```sh
-# 先に postgresql.local.conf のメモリ設定をホストの RAM に合わせる
+# リポジトリの root から。dir で deploy/production に入ってから実行される
+mise run prod:check    # 設定を変えたら先にこれ (起動しない)
+mise run prod:up
+mise run prod:psql    # ログは mise run prod:logs
+
+# mise を入れないホストでは deploy/production で直接
 varlock run -- docker compose up -d
 varlock run -- docker compose ps
 ```
@@ -53,27 +61,30 @@ varlock run -- docker compose ps
 初回だけ init スクリプトがロールと拡張を作る。以降は走らないので、ロールを
 足したときは初期化し直しが必要 (`down -v` は**データも消える**ので注意)。
 
+起動前に `postgresql.local.conf` のメモリ設定を合わせること (要再起動)。
+開発用スタックと同居するなら、その分 (開発用の postgres / Prometheus / Grafana)
+も見込んで決める。
+
 ## 運用
 
-DB は公開していないので、psql はホスト上で:
+DB は公開していないので、psql は `dbtools` 経由で:
 
 ```sh
-varlock run -- docker compose exec dbtools psql
+mise run prod:psql
+varlock run -- docker compose exec dbtools psql    # 直接叩く場合
 ```
 
-外から見るときは SSH ポート転送:
+画面は loopback にだけ出ている:
 
-| | 手元で見るには |
+| | 見るには |
 | --- | --- |
-| Grafana (13000) | `ssh -L 13000:127.0.0.1:13000 <host>` |
-| Prometheus (9090) | `ssh -L 9090:127.0.0.1:9090 <host>` |
-| noVNC (6080, JV-Link の画面) | `ssh -L 6080:127.0.0.1:6080 <host>` |
-| DB (5432, 手元の pgAdmin / psql 用) | `ssh -L 15432:127.0.0.1:5432 <host>` |
+| Grafana (23000) | <http://127.0.0.1:23000> |
+| Prometheus (19090) | <http://127.0.0.1:19090> |
+| noVNC (16080, JV-Link の画面) | <http://127.0.0.1:16080/vnc.html> |
 
-`127.0.0.1:5432` はホスト側では待ち受けていないため、上の転送は
-`docker compose exec` 経由か、一時的に `postgres` の ports を足す必要がある。
-転送で DB を使うなら、ホストで `socat` などを挟むか、
-`dbtools` コンテナ経由で `psql` を使うのが簡単。
+別のマシンから見るときは SSH ポート転送 (`ssh -L 23000:127.0.0.1:23000 <host>`
+のように、上のホスト側ポートをそのまま使う)。DB は待ち受けていないので、
+ホストから `psql` を直接使いたいときは一時的に `postgres` の `ports` を足す。
 
 ## バックアップ
 

@@ -103,3 +103,53 @@ run = "varlock run -- docker compose exec dbtools pgcli"
 [tasks.logs]
 description = "コンテナのログを見る"
 run = "varlock run -- docker compose logs -f"
+
+# compose ファイルの検証。YAML として読めるか、compose のスキーマに合うか、
+# 変数が解決できるかを見る (行の長さなどの見た目は yamllint の仕事)。
+# 起動も停止もしないので、設定を変えた後・反映する前に叩く。
+# 資格情報を要求するので、CI や .env の無い clone では動かない。
+[tasks."compose:check"]
+description = "compose.yaml を検証する (開発用。起動しない)"
+run = "varlock run -- docker compose config -q"
+
+# 本番用コンテナ
+#
+# 開発用とは別プロジェクト・別ディレクトリで、別の .env.schema / .env を使う。
+# dir で必ず deploy/production に入ってから実行する。root で
+# `varlock run -- docker compose -f deploy/production/compose.yaml ...` と叩くと
+# 開発用の .env が環境変数として注入され、それが本番の .env に勝つ。本番 DB は
+# 初回起動時のパスワードで初期化されるので、後から直そうとしても直らない。
+# 準備と手順は deploy/production/README.md。
+#
+# 本番ホストで mise から叩くときは MISE_TASK_RUN_AUTO_INSTALL=false を付ける。
+# root の mise.toml は開発ツール (Rust / nextest など) も宣言しているため、既定の
+# ままだとそれらを本番ホストに入れにいく。
+[tasks."prod:up"]
+description = "本番用コンテナを起動する (deploy/production)"
+dir = "deploy/production"
+run = "varlock run -- docker compose up -d"
+
+[tasks."prod:check"]
+description = "本番用 compose を検証する (起動しない)"
+dir = "deploy/production"
+run = "varlock run -- docker compose config -q"
+
+[tasks."prod:down"]
+description = "本番用コンテナを停止する"
+dir = "deploy/production"
+run = "varlock run -- docker compose down"
+
+[tasks."prod:psql"]
+description = "psql で本番 DB に繋ぐ"
+dir = "deploy/production"
+run = "varlock run -- docker compose exec dbtools psql"
+
+[tasks."prod:pgcli"]
+description = "pgcli で本番 DB に繋ぐ"
+dir = "deploy/production"
+run = "varlock run -- docker compose exec dbtools pgcli"
+
+[tasks."prod:logs"]
+description = "本番コンテナのログを見る"
+dir = "deploy/production"
+run = "varlock run -- docker compose logs -f"
