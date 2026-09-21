@@ -44,10 +44,11 @@ pub struct FileCommit {
 impl Store {
     /// 計画した window を pending として登録。
     /// 既存行は基本的に維持するが、window_end が変わった場合は更新する。
-    /// done/failed 済み window の範囲が変わった (= --to を延ばして再実行)
-    /// ときは、末尾の未取得分を取り直すため pending に戻す (last_file は
-    /// 残さない: 範囲が変わるとファイル列も変わり得るので最初から読み直す。
-    /// 古い last_file で JVSkip 再開すると対象が stream に無くて詰む。
+    /// done/failed/abandoned 済み window の範囲が変わった (= --to を延ばして
+    /// 再実行) ときは、末尾の未取得分を取り直すため pending に戻す
+    /// (last_file は残さない: 範囲が変わるとファイル列も変わり得るので
+    /// 最初から読み直す。古い last_file で JVSkip 再開すると対象が
+    /// stream に無くて詰む。abandoned の復活もこの経路で行う。
     /// 重複は raw_records の冪等キーで吸収される)。
     /// 'running' 中の window は進行中の run が持っているので触らない。
     pub async fn seed_window(
@@ -63,12 +64,12 @@ impl Store {
              values ($1, $2, $3, $4, 'pending')
              on conflict (dataspec, window_start) do update set
                  window_end = excluded.window_end,
-                 state = case when c.state in ('done', 'failed') then 'pending'
-                            else c.state end,
-                 files_done = case when c.state in ('done', 'failed') then 0
-                                 else c.files_done end,
-                 last_file = case when c.state in ('done', 'failed') then null
-                                else c.last_file end,
+                 state = case when c.state in ('done', 'failed', 'abandoned')
+                            then 'pending' else c.state end,
+                 files_done = case when c.state in ('done', 'failed', 'abandoned')
+                                 then 0 else c.files_done end,
+                 last_file = case when c.state in ('done', 'failed', 'abandoned')
+                                then null else c.last_file end,
                  updated_at = now()
              where c.window_end is distinct from excluded.window_end",
         )
@@ -82,12 +83,13 @@ impl Store {
     }
 
     /// 実行待ちの window (pending / failed / running-放置) を start 順で返す。
+    /// 'abandoned' は `jvdata abandon` で隔離された window で、対象外。
     pub async fn pending_windows(&self) -> Result<Vec<CheckpointRow>, sqlx::Error> {
         sqlx::query_as::<_, CheckpointRow>(
             "select dataspec, window_start, window_end, mode, state, files_done,
                     last_file, records_stored, last_file_timestamp, error
                from ingest.checkpoints
-              where state <> 'done'
+              where state in ('pending', 'running', 'failed')
               order by window_start",
         )
         .fetch_all(self.pool())
@@ -334,6 +336,44 @@ impl Store {
         }
         tx.commit().await?;
         Ok(())
+    }
+
+    /// checkpoint を 'abandoned' にして pending_windows の対象から外す。
+    /// 恒久的に失敗し続ける window を `jvdata abandon` で隔離するためのもの。
+    /// 戻り値は更新前の state。行が無ければ None。'done'/'abandoned' は
+    /// 変更せずその state を返す (呼び出し側で「既に完了/隔離済み」と
+    /// 報告するため)。
+    pub async fn abandon_window(
+        &self,
+        dataspec: &str,
+        window_start: &str,
+    ) -> Result<Option<String>, sqlx::Error> {
+        let mut tx = self.pool().begin().await?;
+        let prev: Option<String> = sqlx::query_scalar(
+            "select state from ingest.checkpoints
+              where dataspec = $1 and window_start = $2
+              for update",
+        )
+        .bind(dataspec)
+        .bind(window_start)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some(prev) = prev else {
+            return Ok(None);
+        };
+        if prev != "done" && prev != "abandoned" {
+            sqlx::query(
+                "update ingest.checkpoints
+                    set state = 'abandoned', updated_at = now()
+                  where dataspec = $1 and window_start = $2",
+            )
+            .bind(dataspec)
+            .bind(window_start)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(Some(prev))
     }
 
     /// window 失敗。checkpoint=failed (files_done は巻き戻さない)、run=failed。

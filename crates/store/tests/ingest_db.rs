@@ -357,3 +357,82 @@ async fn last_file_never_regresses() -> Result<(), sqlx::Error> {
 
     cleanup(&store, ds).await
 }
+
+/// abandon_window: pending/failed/running を 'abandoned' にして
+/// pending_windows の対象から外す。done/abandoned は変更しない。
+/// 範囲を変えた再 seed で pending に復活する (再開情報はリセット)。
+#[tokio::test]
+async fn abandon_window_excludes_from_pending_and_reseeds_on_range_change()
+-> Result<(), sqlx::Error> {
+    let Some(store) = db().await? else {
+        return Ok(());
+    };
+    let _lock = store.ingest_lock().await?;
+    let ds = "TESTA";
+    let ws = "20060101000000";
+    cleanup(&store, ds).await?;
+
+    async fn checkpoint(store: &Store, ds: &str, ws: &str) -> Result<CheckpointRow, sqlx::Error> {
+        store
+            .checkpoints()
+            .await?
+            .into_iter()
+            .find(|c| c.dataspec == ds && c.window_start == ws)
+            .ok_or(sqlx::Error::RowNotFound)
+    }
+
+    // 存在しない行は None
+    assert_eq!(store.abandon_window(ds, ws).await?, None);
+
+    // 失敗済み window を abandon → pending_windows から外れる
+    store
+        .seed_window(ds, ws, Some("20061231235959"), "setup")
+        .await?;
+    let run_id = store
+        .begin_window(ds, ws, Some("20061231235959"), "setup", 4)
+        .await?;
+    store
+        .commit_file(
+            run_id,
+            ds,
+            ws,
+            "TESTAFILE1.jvd",
+            &[rec(0, 0, "XX", b"XX1a")],
+        )
+        .await?;
+    store.fail_window(run_id, ds, ws, "boom").await?;
+    assert_eq!(
+        store.abandon_window(ds, ws).await?.as_deref(),
+        Some("failed")
+    );
+    let c = checkpoint(&store, ds, ws).await?;
+    assert_eq!(c.state, "abandoned");
+    assert!(
+        store
+            .pending_windows()
+            .await?
+            .iter()
+            .all(|c| !(c.dataspec == ds && c.window_start == ws))
+    );
+
+    // 同じ範囲で再 seed しても abandoned のまま
+    store
+        .seed_window(ds, ws, Some("20061231235959"), "setup")
+        .await?;
+    assert_eq!(checkpoint(&store, ds, ws).await?.state, "abandoned");
+
+    // 範囲が変わる再 seed → pending に復活し再開情報はリセット
+    store.seed_window(ds, ws, None, "setup").await?;
+    let c = checkpoint(&store, ds, ws).await?;
+    assert_eq!(c.state, "pending");
+    assert_eq!(c.files_done, 0);
+    assert_eq!(c.last_file, None);
+
+    // done / abandoned は abandon_window が書き換えない
+    let run_id2 = store.begin_window(ds, ws, None, "setup", 4).await?;
+    store.finish_window(run_id2, ds, ws, None, None).await?;
+    assert_eq!(store.abandon_window(ds, ws).await?.as_deref(), Some("done"));
+    assert_eq!(checkpoint(&store, ds, ws).await?.state, "done");
+
+    cleanup(&store, ds).await
+}

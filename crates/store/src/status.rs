@@ -11,6 +11,7 @@ pub struct StatusReport {
     pub windows_pending: i64,
     pub windows_done: i64,
     pub windows_failed: i64,
+    pub windows_abandoned: i64,
     pub raw_records: i64,
     pub raw_pending_parse: i64,
     pub parse_errors: i64,
@@ -40,7 +41,8 @@ impl Store {
             "select
                 count(*) filter (where state = 'pending' or state = 'running')::bigint,
                 count(*) filter (where state = 'done')::bigint,
-                count(*) filter (where state = 'failed')::bigint
+                count(*) filter (where state = 'failed')::bigint,
+                count(*) filter (where state = 'abandoned')::bigint
                from ingest.checkpoints",
         )
         .fetch_one(self.pool())
@@ -126,6 +128,7 @@ impl Store {
             windows_pending: win_row.get(0),
             windows_done: win_row.get(1),
             windows_failed: win_row.get(2),
+            windows_abandoned: win_row.get(3),
             raw_records: raw_row.get(0),
             raw_pending_parse: raw_row.get(1),
             parse_errors,

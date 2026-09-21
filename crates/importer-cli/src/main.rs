@@ -6,13 +6,15 @@
 //!   jvdata status
 //!   jvdata normalize   # raw_records → jv.* へ反映
 //!   jvdata reparse     # parse 失敗/未対応の raw を再処理 (parser 修正後)
+//!   jvdata abandon --dataspec RACE --window-start 20250101000000
+//!                      # 恒久的に失敗する window を実行対象から隔離
 //!   jvdata gen-fixture DIR   # JV-Link 無しで試せる合成データを生成
 
 mod ingest;
 
-use bridge::source::{Source, make_source};
+use bridge::source::{Source, SourceError, make_source};
 use clap::{Parser, Subcommand};
-use ingest::{run_diff, run_window};
+use ingest::{IngestError, run_diff, run_window};
 use jvdata_core::dataspec::Dataspec;
 use jvdata_core::plan::{Window, setup_windows};
 use miette::{Context, IntoDiagnostic, Result};
@@ -64,6 +66,18 @@ enum Cmd {
     Status,
     /// raw_records の pending 分を jv.* へ反映する
     Normalize,
+    /// 恒久的に失敗し続ける window の checkpoint を 'abandoned' にし、
+    /// resume/backfill の実行対象から外す。
+    /// 復活させたい場合は window_end が変わるよう --to を変えて
+    /// backfill を seed し直す (範囲変更で pending に戻る)。
+    Abandon {
+        /// dataspec ID (例: RACE)
+        #[arg(long)]
+        dataspec: String,
+        /// 対象 window の window_start (YYYYMMDDhhmmss)
+        #[arg(long)]
+        window_start: String,
+    },
     /// parse 失敗・未対応の raw_records を parse_state=0 に戻して再処理する
     /// (parser を修正したあとに使う)。--all で全 raw を再 parse する。
     Reparse {
@@ -127,6 +141,30 @@ async fn main() -> Result<()> {
         }
         Cmd::Status => {
             status(&store).await?;
+        }
+        Cmd::Abandon {
+            dataspec,
+            window_start,
+        } => {
+            let spec: Dataspec = dataspec.parse().map_err(|e| miette::miette!("{e}"))?;
+            match store
+                .abandon_window(spec.id(), &window_start)
+                .await
+                .into_diagnostic()?
+            {
+                None => {
+                    return Err(miette::miette!(
+                        "checkpoint not found: {} {window_start}",
+                        spec.id()
+                    ));
+                }
+                Some(prev) if prev == "done" || prev == "abandoned" => {
+                    println!("{} {window_start}: already {prev}", spec.id());
+                }
+                Some(prev) => {
+                    println!("{} {window_start}: {prev} -> abandoned", spec.id());
+                }
+            }
         }
         Cmd::Normalize => {
             let s = store.normalize_pending().await.into_diagnostic()?;
@@ -200,6 +238,8 @@ async fn acquire_ingest_lock(store: &Store) -> Result<store::IngestLock> {
 }
 
 /// backfill: window を seed して pending を順に実行し、最後に normalize する。
+/// window の失敗は normalize を妨げない: commit 済み raw を滞留させない
+/// ため、pending の失敗は normalize のあとに伝播する。
 async fn backfill(
     store: &Store,
     source: &dyn Source,
@@ -216,48 +256,96 @@ async fn backfill(
                 .into_diagnostic()?;
         }
     }
-    run_pending(store, source).await?;
+    let pending_result = run_pending(store, source).await;
+    if let Err(e) = &pending_result {
+        warn!(error = %e, "window failed; normalizing committed records anyway");
+    }
     // backfill 1 コマンドで jv.* まで分析可能状態にする
-    normalize_pending(store).await
+    let norm_result = normalize_pending(store).await;
+    if let Err(e) = &norm_result {
+        warn!(error = %e, "normalize failed");
+    }
+    pending_result?;
+    norm_result
+}
+
+/// このエラーが起きたら残りの window を試行しても全て同じ理由で
+/// 失敗する (= window 固有ではない) ものを判定する。
+/// Db (checkpoint の記録自体ができない DB 障害) と
+/// Spawn/EmptyCommand (bridge プロセスを起動できない環境障害)
+/// が該当する。それ以外 (JV-Link が返すエラーコード、途中 EOF、
+/// bridge の途中死等) は window 固有の可能性があるので続行対象とする。
+fn is_systemic(e: &IngestError) -> bool {
+    match e {
+        IngestError::Db(_) => true,
+        IngestError::Source(SourceError::Spawn(_) | SourceError::EmptyCommand) => true,
+        IngestError::Source(_) => false,
+    }
 }
 
 /// pending/failed の checkpoint を順に実行する。
 /// dataspec が解釈できない行 (手動投入や古いテスト残骸) は warn して
-/// 飛ばす。1 行の異常で後続の全 window が止まることはない。
+/// 飛ばす。window 固有の失敗は checkpoint に記録されたあと収集し、
+/// 後続の window を止めずに最後にまとめて報告する
+/// (恒久的失敗が 1 件あっても他の window は進む)。
+/// 系統的エラー (DB 断、bridge 起動不可) のみ即座に伝播する。
 async fn run_pending(store: &Store, source: &dyn Source) -> Result<()> {
-    loop {
-        let pending = store.pending_windows().await.into_diagnostic()?;
-        let Some(ckpt) = pending.into_iter().find(|c| {
-            if c.dataspec.parse::<Dataspec>().is_err() {
-                warn!(dataspec = %c.dataspec, window_start = %c.window_start,
-                    "skipping checkpoint with unknown dataspec");
-                return false;
-            }
-            true
-        }) else {
-            break;
+    // 一覧は 1 回だけ取得する。失敗した window は 'failed' のまま
+    // pending 集合に残るため、反復ごとに取り直すと同じ window が
+    // 先頭に戻ってきて無限リトライになる。
+    let pending = store.pending_windows().await.into_diagnostic()?;
+    let mut failures: Vec<String> = Vec::new();
+    for ckpt in pending {
+        let Ok(spec) = ckpt.dataspec.parse::<Dataspec>() else {
+            warn!(dataspec = %ckpt.dataspec, window_start = %ckpt.window_start,
+                "skipping checkpoint with unknown dataspec");
+            continue;
         };
-        let spec: Dataspec = ckpt.dataspec.parse().map_err(|e| miette::miette!("{e}"))?;
         let window = Window {
             dataspec: spec,
             start: ckpt.window_start.clone(),
             end: ckpt.window_end.clone(),
         };
-        run_window(store, source, &window, ckpt.last_file.as_deref())
-            .await
-            .map_err(|e| {
-                miette::miette!("window {} {} failed: {e}", spec.id(), ckpt.window_start)
-            })?;
+        match run_window(store, source, &window, ckpt.last_file.as_deref()).await {
+            Ok(()) => {}
+            Err(e) if is_systemic(&e) => {
+                return Err(miette::miette!(
+                    "window {} {} failed: {e}",
+                    spec.id(),
+                    ckpt.window_start
+                ));
+            }
+            Err(e) => {
+                warn!(dataspec = %spec.id(), window_start = %ckpt.window_start,
+                    error = %e, "window failed; continuing with remaining windows");
+                failures.push(format!("{}@{}", spec.id(), ckpt.window_start));
+            }
+        }
     }
-    info!("all windows done");
-    Ok(())
+    if failures.is_empty() {
+        info!("all windows done");
+        Ok(())
+    } else {
+        Err(miette::miette!("windows failed: {}", failures.join(", ")))
+    }
 }
 
 /// resume: 残り window + 各 dataspec の差分取得 + normalize。
+///
+/// 1 か所の失敗で後段を止めないよう、各段の失敗は分離する:
+///   - pending window の失敗は checkpoint に記録済みなので、そのまま
+///     diff/normalize に進み、最後にまとめて報告する
+///   - diff は dataspec ごとに独立 (失敗しても cursor が進まないだけで
+///     次回 resume が同じ位置から取り直す)
+///   - normalize は commit 済み raw を滞留させないため必ず実行する
 async fn resume(store: &Store, source: &dyn Source) -> Result<()> {
-    run_pending(store, source).await?;
+    let pending_result = run_pending(store, source).await;
+    if let Err(e) = &pending_result {
+        warn!(error = %e, "window failed; continuing with diff and normalize");
+    }
 
     // setup が済んだ dataspec 全てについて cursor から差分を取る
+    let mut diff_failures = Vec::new();
     for (spec_id, ts) in store.all_cursors().await.into_diagnostic()? {
         let Ok(spec) = spec_id.parse::<Dataspec>() else {
             warn!(dataspec = %spec_id, "skipping cursor with unknown dataspec");
@@ -269,9 +357,30 @@ async fn resume(store: &Store, source: &dyn Source) -> Result<()> {
             warn!(dataspec = %spec_id, "dataspec does not support option=1; skipping diff");
             continue;
         }
-        run_diff(store, source, spec, &ts).await.into_diagnostic()?;
+        if let Err(e) = run_diff(store, source, spec, &ts).await {
+            warn!(dataspec = %spec_id, error = %e, "diff fetch failed; continuing");
+            diff_failures.push(spec_id);
+            // spawn 不可・DB 断などの系統的エラーは残り dataspec も
+            // 同じ結果なので打ち切る
+            if is_systemic(&e) {
+                break;
+            }
+        }
     }
-    normalize_pending(store).await
+
+    let norm_result = normalize_pending(store).await;
+    if let Err(e) = &norm_result {
+        warn!(error = %e, "normalize failed");
+    }
+
+    pending_result?;
+    if !diff_failures.is_empty() {
+        return Err(miette::miette!(
+            "diff fetch failed for: {}",
+            diff_failures.join(", ")
+        ));
+    }
+    norm_result
 }
 
 /// raw_records の pending 分を jv.* へ反映する。
@@ -293,8 +402,8 @@ async fn status(store: &Store) -> Result<()> {
         s.runs_running, s.runs_done, s.runs_failed
     );
     println!(
-        "== windows   : pending={} done={} failed={}",
-        s.windows_pending, s.windows_done, s.windows_failed
+        "== windows   : pending={} done={} failed={} abandoned={}",
+        s.windows_pending, s.windows_done, s.windows_failed, s.windows_abandoned
     );
     println!(
         "== raw       : records={} pending_parse={} parse_errors={}",

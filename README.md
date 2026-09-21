@@ -148,6 +148,8 @@ jvdata resume                      # 中断した window の続き + 差分取�
 jvdata normalize                   # raw_records → jv.* へ反映 (backfill/resume でも自動実行)
 jvdata reparse                     # parse 失敗・未対応の raw を parse_state=0 に戻して再処理
                                    #   (--all で全 raw を再 parse。parser 修正後に使う)
+jvdata abandon --dataspec RACE --window-start 20250101000000
+                                   # 恒久的に失敗する window を 'abandoned' にして実行対象から外す
 jvdata status                      # run / checkpoint / raw / jv の件数を表示
 ```
 
@@ -185,6 +187,13 @@ jvdata backfill --from 2024-05-01 --to 2024-05-31 --source fixture:/tmp/fixture
   (読み飛ばして done にすることはしない)。
 - `backfill` / `resume` は取得完了後に pending な raw_records の normalize
   (raw → `jv.*`) まで自動で行う。`jvdata normalize` は手動で回したい場合用。
+- window の失敗は隣の window や差分取得、normalize を止めない
+  (失敗は checkpoint に記録され、最後にまとめて報告される)。
+  DB 障害や bridge の起動不可など全 window が同じ理由で落ちる
+  系統的エラーの場合のみ即座に中断する。
+- 恒久的に失敗し続ける window は `jvdata abandon` で `abandoned` にして
+  実行対象から外せる。復活させたい場合は `--to` を変えて `backfill`
+  を再実行する (window 範囲の変更で pending に戻る)。
 - 取得側が Done frame を送らずに切れた場合、その window は失敗になる
   (部分的に取れたとみなして done にしない)。JVOpen の -1
   (該当データなし) は「0 件で完了」として扱う。
