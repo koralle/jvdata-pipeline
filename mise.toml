@@ -100,6 +100,11 @@ TS_BIND_ADDR=$(tailscale ip -4 2>/dev/null | head -1) \
 description = "Tailscale の証明書を docker/tls に取得し直す"
 run = """
 mkdir -p docker/tls
+# 証明書が無い状態で compose up すると、Docker が bind mount の元パスを
+# ディレクトリとして作ってしまう。そのままでは tailscale cert が書けず
+# (Grafana / Prometheus / pgAdmin が "is a directory" で起動に失敗する)、
+# 空ディレクトリのまま残るので先に消す。
+rmdir docker/tls/tls.crt docker/tls/tls.key 2>/dev/null || true
 # 証明書は root が取ってくる。コンテナ内の UID (grafana 472 / prometheus の
 # nobody / pgadmin 5050) はばらばらでグループにまとめられないので、読める
 # 権限まで root のうちに付ける。
