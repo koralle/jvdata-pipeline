@@ -87,7 +87,7 @@ jobs:
           cache: false
 
       # taiki-e/install-action v2.87.12
-      - uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375
+      - uses: taiki-e/install-action@4076c08d76dba979c11a7285295b0716c1d67908
         with:
           tool: cargo-deny@0.20.2
 
@@ -105,7 +105,7 @@ jobs:
           cache: false
 
       # taiki-e/install-action v2.87.12
-      - uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375
+      - uses: taiki-e/install-action@4076c08d76dba979c11a7285295b0716c1d67908
         with:
           tool: cargo-machete@0.9.2
 
@@ -145,7 +145,7 @@ jobs:
         run: psql "postgres://jvdata:jvdata@localhost:5432/jvdata" -c "create role jvdata_loader login"
 
       # taiki-e/install-action v2.87.12
-      - uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375
+      - uses: taiki-e/install-action@4076c08d76dba979c11a7285295b0716c1d67908
         with:
           tool: nextest@0.9.144
 
