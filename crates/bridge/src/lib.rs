@@ -1,14 +1,12 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
-}
+//! JV-Link bridge 層。
+//!
+//! JV-Link (Windows COM) と pure Rust の間の境界。
+//! このクレートは JV-Data のデータモデルを知らない。やりとりするのは
+//! 「ファイル名つきの raw bytes の列」だけ。
+//!
+//! - [`protocol`][]: jvlink-bridge.exe (wine 内) ↔ ホスト側の frame codec
+//! - [`source`][]:   ホスト側の取得インターフェース (process spawn / fixture)
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-}
+pub mod fixture;
+pub mod protocol;
+pub mod source;

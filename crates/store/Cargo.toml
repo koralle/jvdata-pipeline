@@ -1,25 +1,19 @@
 [package]
-name = "importer-cli"
+name = "store"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 publish = false
 
-[[bin]]
-name = "jvdata"
-path = "src/main.rs"
-
 [dependencies]
-clap.workspace = true
-tokio.workspace = true
-tracing.workspace = true
-tracing-subscriber.workspace = true
-miette.workspace = true
-thiserror.workspace = true
-time.workspace = true
 sqlx.workspace = true
+tracing.workspace = true
+time.workspace = true
 jvdata-core = { version = "0.1.0", path = "../jvdata-core" }
-store = { version = "0.1.0", path = "../store" }
+sha2.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
 bridge = { version = "0.1.0", path = "../bridge" }
 
 [lints]

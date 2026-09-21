@@ -115,10 +115,34 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-24.04
+    # store/tests/*_db.rs の PostgreSQL 統合テスト用。
+    # DATABASE_URL 未設定だと skip してしまうので必ず起動する。
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: jvdata
+          POSTGRES_PASSWORD: jvdata
+          POSTGRES_DB: jvdata
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://jvdata:jvdata@localhost:5432/jvdata
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - uses: ./.github/actions/setup-rust-toolchain
+
+      # migration 0001 の grant 対象ロール。開発環境では
+      # docker/postgres/init/10-roles.sh が作るが、CI は素の postgres
+      # イメージなのでここで作る。
+      - name: Create roles referenced by migrations
+        run: psql "postgres://jvdata:jvdata@localhost:5432/jvdata" -c "create role jvdata_loader login"
 
       # taiki-e/install-action v2.87.12
       - uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375

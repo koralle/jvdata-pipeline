@@ -93,13 +93,16 @@ POSTGRES_PORT=15432
 
 | どこから | 接続先 | ロール |
 | --- | --- | --- |
-| ホスト OS | `127.0.0.1:5432` | `jvdata` (管理用) |
-| wine コンテナ | `postgres:5432` | `jvdata_loader` (収集用 / 管理権限なし) |
+| ホスト OS (`jvdata migrate`) | `127.0.0.1:5432` | `jvdata` (管理用) |
+| ホスト OS (backfill 等の収集系) | `127.0.0.1:5432` | `jvdata` または `jvdata_loader` (収集用 / 管理権限なし) |
 | postgres_exporter / Grafana | `postgres:5432` | `jvdata_metrics` (統計の読み取りのみ) |
 
-接続文字列は `postgres://<user>:<password>@<host>:5432/jvdata`。wine コンテナには
-`POSTGRES_HOST` / `POSTGRES_PORT` / `POSTGRES_DB` / `POSTGRES_USER` /
-`POSTGRES_PASSWORD` を渡してあるので、その中の 32-bit プロセスはそこから読める。
+接続文字列は `postgres://<user>:<password>@<host>:5432/jvdata`。
+DB への書き込みはすべてホスト側の `jvdata` CLI が行う
+(wine コンテナ内の bridge は PostgreSQL に接続しない。framed binary を
+stdout に流すだけ)。`jvdata_loader` には ingest/jv の DML と sequence の
+権限があるので、`migrate` 以外のコマンド (backfill / resume / normalize /
+reparse / status) は loader の資格情報でも動く。
 `jvdata_loader` のテーブル権限は、スキーマを作るときに
 `docker/postgres/init/10-roles.sh` へ足す。
 
@@ -126,3 +129,84 @@ JV-Link は再配布できないのでイメージには入っていない。Win
 2. <http://localhost:6080/vnc.html> を開く
 3. デスクトップ上でインストーラを実行し、JRA-VAN の利用規約に同意して利用登録する
 4. `docker compose restart wine` を実行し、起動ログから JV-Link の未導入警告が消えたことを確認する
+
+GUI が使えない環境では unshield + regsvr32 での手動登録と、利用キーの
+CLI 登録 (`jvlink-bridge.exe set-key`) の手順を **[docs/jv-link-setup.md](docs/jv-link-setup.md)**
+にまとめてある。
+
+## データ取り込み (`jvdata` CLI)
+
+`crates/importer-cli` の `jvdata` が取得・蓄積・正規化を司る。
+
+```sh
+cargo build -p importer-cli        # → target/debug/jvdata
+export DATABASE_URL=postgres://jvdata:$POSTGRES_PASSWORD@127.0.0.1:5432/jvdata
+
+jvdata migrate                     # ingest.* / jv.* schema を適用
+jvdata backfill --from 2016-01-01 --to 2026-09-21   # 年単位で分割して蓄積系取得 (option=4)
+jvdata resume                      # 中断した window の続き + 差分取得 (option=1)
+jvdata normalize                   # raw_records → jv.* へ反映 (backfill/resume でも自動実行)
+jvdata reparse                     # parse 失敗・未対応の raw を parse_state=0 に戻して再処理
+                                   #   (--all で全 raw を再 parse。parser 修正後に使う)
+jvdata status                      # run / checkpoint / raw / jv の件数を表示
+```
+
+`--source` で取得元を選ぶ (既定 `wine`):
+
+- `wine` … `scripts/jvlink-bridge.sh` 経由で wine コンテナ内の
+  `jvlink-bridge.exe` を呼び、JV-Link から `JVGets` (raw Shift_JIS) で取得
+- `fixture:DIR` … ローカルファイルを同じ frame 列として再生 (JV-Link 不要)
+- 任意のコマンド文字列 … そのコマンドを bridge プロセスとして spawn
+
+```sh
+jvdata gen-fixture /tmp/fixture    # 合成 JV-Data 風データを生成
+jvdata backfill --from 2024-05-01 --to 2024-05-31 --source fixture:/tmp/fixture
+```
+
+### `jvdata` / bridge の環境変数
+
+| 変数 | 用途 |
+| --- | --- |
+| `DATABASE_URL` | PostgreSQL 接続 URL (`--database-url` で上書き可) |
+| `JVDATA_SOURCE` | `--source` の既定値 (`wine` / `fixture:DIR` / 任意コマンド) |
+| `JVDATA_WINE_CONTAINER` | bridge を実行する wine コンテナ名 (既定 `jvdata-pipeline-wine-1`) |
+| `JVDATA_BRIDGE_SCRIPT` | `scripts/jvlink-bridge.sh` のパス上書き |
+| `JVDATA_SID` | JVInit に渡すソフトウェア ID (既定 `UNKNOWN`。docker exec で wine コンテナへ転送される) |
+| `JVDATA_STALL_SECS` | ダウンロード停滞検出の上限秒数 (既定 600。JVStatus の進捗がこの時間無いと window 失敗) |
+
+### 再開と冪等性
+
+- 取得は「JV-Link の 1 物理ファイル」をトランザクション境界にする。
+  raw_records の INSERT と checkpoint (last_file) の更新は同じ tx で commit され、
+  commit より先に checkpoint が進むことはない。
+- 途中で切れても `jvdata resume` (または同じ `backfill` の再実行) で
+  checkpoint の `last_file` まで JVSkip して続きから読む (JV-Link 公式の再開手順)。
+  再開対象ファイルが stream 内に見つからない場合はその window は失敗になる
+  (読み飛ばして done にすることはしない)。
+- `backfill` / `resume` は取得完了後に pending な raw_records の normalize
+  (raw → `jv.*`) まで自動で行う。`jvdata normalize` は手動で回したい場合用。
+- 取得側が Done frame を送らずに切れた場合、その window は失敗になる
+  (部分的に取れたとみなして done にしない)。JVOpen の -1
+  (該当データなし) は「0 件で完了」として扱う。
+- `raw_records` は `unique(filename, file_seq, payload_sha256)` で冪等。
+  同一レコードの再取得は skip、訂正データ (同キーで中身が違う) は別バージョンとして残る。
+- セットアップ (option=4) は「コンテンツ日付 (=開催日)」でフィルタされるので
+  ウィンドウは開催日単位で分割すればよい (現在は年単位)。
+
+### schema
+
+- `ingest.runs` … 1 取得実行 (JVOpen 1回) の記録
+- `ingest.checkpoints` … dataspec×window ごとの再開位置と状態
+- `ingest.cursors` … dataspec ごとの差分取得起点 (lastfiletimestamp)
+- `ingest.raw_records` … JV-Link の raw bytes (lossless)
+- `ingest.parse_errors` … parse 失敗の記録 (再処理可能)
+- `jv.races / entries / horses / jockeys / trainers / payouts / schedule_days` … 正規化済み
+
+### 分析クエリ
+
+`queries/` に分析用 SQL がある (`mise run psql` から `\i` か `-f` で実行できる)。
+
+- `queries/races_by_year.sql` … 年・場別レース数
+- `queries/horse_results.sql` … 馬ごとの出走・勝率、騎手別成績
+- `queries/payouts_and_odds.sql` … 人気別勝率・回収率、レース別払戻
+- `queries/ingest_status.sql` … ingest の実行履歴・checkpoint・DB サイズ
