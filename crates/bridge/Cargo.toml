@@ -6,7 +6,16 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
+tokio.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+encoding_rs.workspace = true
+
+# JV-Link (ActiveX/COM) は Windows でしか動かない。
+# jvlink-bridge.exe を i686-pc-windows-gnullvm でビルドして
+# wine コンテナ内で実行する。ホスト側の protocol/source は pure Rust。
+[target.'cfg(windows)'.dependencies]
+windows.workspace = true
 
 [lints]
 workspace = true
-

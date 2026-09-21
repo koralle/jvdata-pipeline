@@ -148,6 +148,9 @@ services:
       - "127.0.0.1:16080:6080"
     volumes:
       - wineprefix:/wineprefix
+      # ホスト側でビルドした jvlink-bridge.exe を Z:\opt\jvdata\ から呼ぶ。
+      # (cargo build --release --target i686-pc-windows-gnullvm -p bridge)
+      - ../../target/i686-pc-windows-gnullvm/release:/opt/jvdata:ro
 
   # バックアップ。毎日 pg_dump、毎週 pg_basebackup (PITR 用)。
   #

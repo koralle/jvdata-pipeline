@@ -43,6 +43,19 @@ run = "cargo nextest run --workspace --all-features"
 description = "doc テストを実行する"
 run = "cargo test --doc --workspace --all-features"
 
+# store/tests/*_db.rs の PostgreSQL 統合テスト。開発 DB (mise run up) が
+# 起動済みであること。compose は DB を 127.0.0.1:5432 に出しているので
+# ホスト側はそこへ繋ぐ (.env の POSTGRES_HOST=postgres はコンテナ内専用)。
+# DATABASE_URL は .env の POSTGRES_* から組み立てる
+# (テストは migration を含むので管理用の jvdata ロールで繋ぐ)。
+[tasks."test-db"]
+description = "PostgreSQL 統合テストを実行する (開発 DB が起動済みであること)"
+depends = ["env:init"]
+run = """
+varlock run -- sh -c 'DATABASE_URL="postgresql://jvdata:$POSTGRES_PASSWORD@127.0.0.1:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-jvdata}" \
+  cargo nextest run -p store --all-features'
+"""
+
 # 依存クレート
 [tasks.machete]
 description = "未使用クレートを検出する"
@@ -87,6 +100,11 @@ TS_BIND_ADDR=$(tailscale ip -4 2>/dev/null | head -1) \
 description = "Tailscale の証明書を docker/tls に取得し直す"
 run = """
 mkdir -p docker/tls
+# 証明書が無い状態で compose up すると、Docker が bind mount の元パスを
+# ディレクトリとして作ってしまう。そのままでは tailscale cert が書けず
+# (Grafana / Prometheus / pgAdmin が "is a directory" で起動に失敗する)、
+# 空ディレクトリのまま残るので先に消す。
+rmdir docker/tls/tls.crt docker/tls/tls.key 2>/dev/null || true
 # 証明書は root が取ってくる。コンテナ内の UID (grafana 472 / prometheus の
 # nobody / pgadmin 5050) はばらばらでグループにまとめられないので、読める
 # 権限まで root のうちに付ける。

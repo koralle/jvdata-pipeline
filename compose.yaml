@@ -196,6 +196,9 @@ services:
       # prefix を永続化する。手作業で入れた JV-Link と利用登録は
       # docker compose down では消えない。
       - wineprefix:/wineprefix
+      # ホスト側でビルドした jvlink-bridge.exe を Z:\opt\jvdata\ から呼ぶ。
+      # (cargo build --release --target i686-pc-windows-gnullvm -p bridge)
+      - ./target/i686-pc-windows-gnullvm/release:/opt/jvdata:ro
 
 volumes:
   pgdata:

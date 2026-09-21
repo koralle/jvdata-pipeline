@@ -45,6 +45,16 @@ varlock load     # 足りない変数があればここで落ちる
 secret manager を使うなら、`varlock run` の前段で環境変数に入れる
 (環境変数はスキーマの値より優先される)。
 
+収集に使う `jvlink-bridge.exe` は wine コンテナに bind mount するので、
+先にホスト側でクロスビルドしておく (手順は `docs/jv-link-setup.md`):
+
+```sh
+# リポジトリの root から。llvm-mingw 等のリンカが要る
+cargo build --release --target i686-pc-windows-gnullvm -p bridge --bin jvlink-bridge
+# → target/i686-pc-windows-gnullvm/release/jvlink-bridge.exe
+#   compose.yaml がこのディレクトリを wine の /opt/jvdata (Z:\opt\jvdata) にマウント
+```
+
 ## 起動
 
 ```sh
